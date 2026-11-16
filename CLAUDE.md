@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-TestLens is an early v1 repo. The validation infrastructure (sandbox runner, double-run flaky detection, mutation operators and scoring), deterministic target selection, deterministic rule scan (R001–R005), the LLM interface with a deterministic fake, sandbox-gated candidate test generation, and line-anchored audit triage are implemented; audit cross-check/reproduction/grading, the evaluation harness, CLI, README, and SQLite metadata are not. This file is the single source of truth for the v1 spec; the confirmed design decisions at the end are normative. Continue in Build order; do not add a real model client or an evaluation run before triage and review exist.
+TestLens is an early v1 repo. The validation infrastructure (sandbox runner, double-run flaky detection, mutation operators and scoring), deterministic target selection, deterministic rule scan (R001–R005), the LLM interface with a deterministic fake, sandbox-gated candidate test generation, line-anchored audit triage, and the false-positive cross-check are implemented; audit reproduction/grading, the evaluation harness, CLI, README, and SQLite metadata are not. This file is the single source of truth for the v1 spec; the confirmed design decisions at the end are normative. Continue in Build order; do not add a real model client or an evaluation run before triage and review exist.
 
 Goal: for small Python web projects (FastAPI/Flask style with clear routes and function boundaries), an LLM only proposes candidates. Sandboxed execution, mutation scoring, and an independent false-positive review decide what survives; attribution explains every rejection.
 
@@ -27,6 +27,7 @@ Goal: for small Python web projects (FastAPI/Flask style with clear routes and f
 - `audit/` — rule scan, R001–R005 handlers, and LLM triage; `RuleCandidate` and `TriageDraft` are intermediate stage outputs, not final `Finding`s.
 - `llm/` — provider-neutral request/response contracts, the `LLMClient` protocol, and the deterministic fake.
 - `generation/` — prompt construction, deterministic proposal validation, and `generate_tests`; emits candidates only and never executes or writes the target project.
+- `review/` — false-positive cross-check: deterministic rule reviewer, independent reviewer interface and fake, context assembly, and evidence-anchor validation.
 
 ## Build order (non-negotiable)
 
@@ -125,6 +126,18 @@ Rule IDs are used in reports and evaluation grouping. Adding a rule requires upd
 - `TriageTrace` records model kind/id, template version, candidates considered, drafts accepted/rejected, rejections by reason, elapsed time, and warnings.
 - Triage is not a final finding: cross-check, reproduction, and evidence grading remain later stages. `LLM_INDEPENDENT` is still not emitted.
 
+### False-positive cross-check (v1)
+
+`review/` is independent of `llm/`: `ClaimReviewer` is a separate interface returning structured `ReviewerVerdict` objects, and `DeterministicReviewer` has its own implementation and state. It does not import, subclass, or share state with the triage fake.
+
+- `cross_check(profile, rule_report, subjects, reviewer)` accepts `CrossCheckSubject`s; `subjects_from_drafts` converts `TriageDraft`s (rule id, file, span, claim, trigger path). Triage reasoning text is never part of the request.
+- Rule-backed claims go to `RuleReviewer` first: it re-runs the deterministic rule on the current source and passes only if the same span still matches. Its verdict is authoritative and free-text review cannot override it. Enumerated context refutations in v1: R005 `try/finally: close()` and `ExitStack.enter_context` produce `REFUTE` + `REFUTED_BY_CONTEXT` with anchored evidence.
+- Semantic claims (`rule_id=None`, the v2 path) go to the independent reviewer through `ReviewRequest`, which carries the enclosing function, imports, routes, callers, type hints, existing guards, and other rule hits in the file.
+- `pass` requires at least one `supports` evidence line; `refute` requires at least one `refutes` line. Every evidence line is re-anchored against the current source: the file must stay inside the project, the span must exist, and `snippet_hash` must match. Missing evidence → `UNVERIFIABLE_CLAIM`; unlocatable or mismatched evidence → `NO_LINE_LOCATION`; either way the verdict is downgraded to `unverifiable`.
+- `refute` always carries a `RetractReason` (default `REFUTED_BY_CONTEXT`); `unverifiable` defaults to `UNVERIFIABLE_CLAIM`.
+- `CrossCheckResult` follows decision 3. `CrossCheckTrace` records subjects considered, verdict counts, rule checks, model reviews, reviewer ids, elapsed time, and warnings.
+- Cross-check is not the final output: sandbox reproduction and evidence grading remain later stages.
+
 ## Evaluation baseline
 
 - Two vendored minimal fixture projects (one FastAPI, one Flask), with pinned dependencies, offline execution, known defects, and known false positives. Real OSS projects are optional, pinned by commit, and are not the deterministic baseline.
@@ -162,7 +175,7 @@ Development happens on Windows (Git Bash). `resource` is POSIX-only. POSIX enfor
 - Run one file: `python -m pytest tests/test_mutation_score.py`
 - Run target selection or rule scan: `python -m pytest tests/test_target_selection.py`, `python -m pytest tests/test_rule_scan.py`
 - Run generation: `python -m pytest tests/test_generation.py`; sandbox gate: `python -m pytest tests/test_sandbox_health.py`
-- Run audit triage: `python -m pytest tests/test_triage.py`
+- Run audit triage: `python -m pytest tests/test_triage.py`; cross-check: `python -m pytest tests/test_cross_check.py`
 - Run one test: `python -m pytest tests/test_runner.py::test_runner_strong_passes_and_covers_target`
 
 Tests invoke pytest inside a sandbox subprocess against `tests/fixtures/sample_project`; the fixture tests are excluded from the outer collection. The README is still pending and must state that production isolation uses containers even though v1 uses `subprocess` + resource limits.
