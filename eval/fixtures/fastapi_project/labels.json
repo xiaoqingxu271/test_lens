@@ -1,0 +1,54 @@
+{
+  "project": "fastapi_project",
+  "defects": [
+    {
+      "file": "app.py",
+      "rule_id": "R001-MUTABLE-DEFAULT",
+      "marker": "def collect(items=[]):"
+    },
+    {
+      "file": "app.py",
+      "rule_id": "R002-NONE-DEREF-NO-GUARD",
+      "marker": "return state.value"
+    },
+    {
+      "file": "app.py",
+      "rule_id": "R003-UNREACHABLE-AFTER-RETURN",
+      "marker": "unused = True"
+    },
+    {
+      "file": "app.py",
+      "rule_id": "R004-BARE-EXCEPT-SWALLOW",
+      "marker": "except:"
+    },
+    {
+      "file": "app.py",
+      "rule_id": "R005-RESOURCE-NO-WITH",
+      "marker": "config_handle = open("
+    }
+  ],
+  "false_positives": [
+    {
+      "file": "app.py",
+      "rule_id": "R005-RESOURCE-NO-WITH",
+      "marker": "finally_handle = open(",
+      "retract_reason": "REFUTED_BY_CONTEXT",
+      "case": "try_finally_close"
+    },
+    {
+      "file": "app.py",
+      "rule_id": "R005-RESOURCE-NO-WITH",
+      "marker": "stack_handle = stack.enter_context(open(",
+      "retract_reason": "REFUTED_BY_CONTEXT",
+      "case": "exit_stack"
+    }
+  ],
+  "false_negatives": [
+    {
+      "file": "app.py",
+      "rule_id": "R005-RESOURCE-NO-WITH",
+      "marker": "with sqlite3.connect(",
+      "case": "sqlite_context_manager"
+    }
+  ]
+}

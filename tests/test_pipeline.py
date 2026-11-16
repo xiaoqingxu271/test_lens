@@ -504,6 +504,11 @@ def test_pipeline_keeps_only_the_strong_test():
     assert trace.sandbox_passed == 2
     assert trace.flaky == 1
     assert trace.mutation_scored == 2
+    assert trace.mutations_run == 10
+    assert trace.mutations_killed == 5
+    assert trace.killed_by_assertion == 5
+    assert trace.killed_by_exception == 0
+    assert trace.killed_by_timeout == 0
     assert trace.kept == 1
     assert trace.discarded_by_reason == {
         DiscardReason.ENVIRONMENT_MISSING: 1,

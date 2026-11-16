@@ -139,6 +139,7 @@ def run_test_pipeline(
             if item.test_result is not None
             and item.test_result.final_status == FinalStatus.PASSED
         )
+        scored = list(mutations.values())
         trace = TestPipelineTrace(
             started_at=started_at,
             elapsed_ms=int((time.perf_counter() - started) * 1000),
@@ -147,7 +148,12 @@ def run_test_pipeline(
             tests_executed=len(reports),
             sandbox_passed=sandbox_passed,
             flaky=len(attribution.flaky),
-            mutation_scored=len(mutations),
+            mutation_scored=len(scored),
+            mutations_run=sum(item.mutations_run for item in scored),
+            mutations_killed=sum(item.mutations_killed for item in scored),
+            killed_by_assertion=sum(item.killed_by_assertion for item in scored),
+            killed_by_exception=sum(item.killed_by_exception for item in scored),
+            killed_by_timeout=sum(item.killed_by_timeout for item in scored),
             kept=len(attribution.kept),
             discarded_by_reason=attribution.discarded_by_reason,
             double_run=config.double_run,

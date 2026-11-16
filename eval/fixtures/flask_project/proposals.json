@@ -1,0 +1,31 @@
+{
+  "test_generation::app.py::score": {
+    "tests": [
+      {
+        "test_file": "generated/test_score_strong.py",
+        "test_name": "test_score_strong",
+        "source": "from app import score\n\n\ndef test_score_strong():\n    assert score(10) == 2\n    assert score(9) == 0\n"
+      },
+      {
+        "test_file": "generated/test_score_weak.py",
+        "test_name": "test_score_weak",
+        "source": "from app import score\n\n\ndef test_score_weak():\n    score(10)\n    score(9)\n"
+      },
+      {
+        "test_file": "generated/test_score_partial.py",
+        "test_name": "test_score_partial",
+        "source": "from app import score\n\n\ndef test_score_partial():\n    assert score(10) == 2\n"
+      },
+      {
+        "test_file": "generated/test_score_failing.py",
+        "test_name": "test_score_failing",
+        "source": "from app import score\n\n\ndef test_score_failing():\n    assert score(10) == 99\n"
+      },
+      {
+        "test_file": "generated/test_score_flaky.py",
+        "test_name": "test_score_flaky",
+        "source": "from pathlib import Path\n\nfrom app import score\n\n\ndef test_score_flaky():\n    marker = Path(__file__).with_name(\"flaky.marker\")\n    if marker.exists():\n        assert score(10) == 2\n    else:\n        marker.write_text(\"first run\", encoding=\"utf-8\")\n        assert score(10) == 99\n"
+      }
+    ]
+  }
+}

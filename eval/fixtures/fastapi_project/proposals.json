@@ -1,0 +1,31 @@
+{
+  "test_generation::app.py::classify": {
+    "tests": [
+      {
+        "test_file": "generated/test_classify_strong.py",
+        "test_name": "test_classify_strong",
+        "source": "from app import classify\n\n\ndef test_classify_strong():\n    assert classify(1) == 1\n    assert classify(0) == 0\n    assert classify(-1) == 0\n"
+      },
+      {
+        "test_file": "generated/test_classify_weak.py",
+        "test_name": "test_classify_weak",
+        "source": "from app import classify\n\n\ndef test_classify_weak():\n    classify(1)\n    classify(0)\n    classify(-1)\n"
+      },
+      {
+        "test_file": "generated/test_classify_partial.py",
+        "test_name": "test_classify_partial",
+        "source": "from app import classify\n\n\ndef test_classify_partial():\n    assert classify(-1) == 0\n"
+      },
+      {
+        "test_file": "generated/test_classify_failing.py",
+        "test_name": "test_classify_failing",
+        "source": "from app import classify\n\n\ndef test_classify_failing():\n    assert classify(1) == 99\n"
+      },
+      {
+        "test_file": "generated/test_classify_flaky.py",
+        "test_name": "test_classify_flaky",
+        "source": "from pathlib import Path\n\nfrom app import classify\n\n\ndef test_classify_flaky():\n    marker = Path(__file__).with_name(\"flaky.marker\")\n    if marker.exists():\n        assert classify(1) == 1\n    else:\n        marker.write_text(\"first run\", encoding=\"utf-8\")\n        assert classify(1) == 99\n"
+      }
+    ]
+  }
+}

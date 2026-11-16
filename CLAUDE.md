@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-TestLens is an early v1 repo. The validation infrastructure (sandbox runner, double-run flaky detection, mutation operators and scoring), deterministic target selection, deterministic rule scan (R001–R005), the LLM interface with a deterministic fake, sandbox-gated candidate test generation, line-anchored audit triage, the false-positive cross-check, sandbox reproduction, evidence grading/`AuditReport` emission, and the test-side pipeline closure are implemented; the evaluation harness, CLI, README, and SQLite metadata are not. This file is the single source of truth for the v1 spec; the confirmed design decisions at the end are normative. Continue in Build order; do not add a real model client or an evaluation run before triage and review exist.
+TestLens is an early v1 repo. The validation infrastructure (sandbox runner, double-run flaky detection, mutation operators and scoring), deterministic target selection, deterministic rule scan (R001–R005), the LLM interface with a deterministic fake, sandbox-gated candidate test generation, line-anchored audit triage, the false-positive cross-check, sandbox reproduction, evidence grading/`AuditReport` emission, the test-side pipeline closure, and the evaluation harness on vendored fixtures are implemented; the CLI, README, and SQLite metadata are not. This file is the single source of truth for the v1 spec; the confirmed design decisions at the end are normative. Continue in Build order; do not add a real model client or an evaluation run before triage and review exist.
 
 Goal: for small Python web projects (FastAPI/Flask style with clear routes and function boundaries), an LLM only proposes candidates. Sandboxed execution, mutation scoring, and an independent false-positive review decide what survives; attribution explains every rejection.
 
@@ -29,6 +29,7 @@ Goal: for small Python web projects (FastAPI/Flask style with clear routes and f
 - `generation/` — prompt construction, deterministic proposal validation, and `generate_tests`; emits candidates only and never executes or writes the target project.
 - `review/` — false-positive cross-check: deterministic rule reviewer, independent reviewer interface and fake, context assembly, and evidence-anchor validation.
 - `pipeline/` — test-side closure: isolated materialization, per-candidate double-run execution, target-local mutation scoring, enumerated discard attribution, and `TestReport`; never writes the target project.
+- `evaluation/` — evaluation harness and metrics over the vendored fixtures; `eval/fixtures/` holds the self-contained FastAPI/Flask projects, labels, and fixed fake proposals; `eval/reports/` is generated output (gitignored).
 
 ## Build order (non-negotiable)
 
@@ -176,10 +177,12 @@ Rule IDs are used in reports and evaluation grouping. Adding a rule requires upd
 
 ## Evaluation baseline
 
-- Two vendored minimal fixture projects (one FastAPI, one Flask), with pinned dependencies, offline execution, known defects, and known false positives. Real OSS projects are optional, pinned by commit, and are not the deterministic baseline.
-- Initial mutation-kill threshold: `0.5`. Calibrate on the fixture evaluation, then record the calibrated value and its evidence in this file and the README.
-- Evaluation reports include kept count, `DiscardReason` distribution, mean kill rate with the assertion/exception/timeout breakdown, flaky rate, platform, enforcement mode, and the equivalent-mutant caveat.
-- One command, fixed seeds, timestamped results under `eval/reports/`.
+- Two vendored minimal fixture projects (one FastAPI, one Flask), with pinned dependencies (`eval/requirements.txt`), offline execution, known defects, and known false positives. Decorators use local stubs so no framework install or network is needed. Real OSS projects are optional, pinned by commit, and are not the deterministic baseline.
+- Labels are marker-based (`labels.json`): each expected defect, false positive, and false negative names an exact source marker, resolved to a line at evaluation time.
+- `proposals.json` supplies fixed deterministic-fake proposals per target; the fake is the default and model identity is recorded in the report.
+- One command: `python -m evaluation` writes timestamped `report.json`, `calibration.json`, and `summary.md` under `eval/reports/`, with fixed seeds, `double_run=true`, and the platform/enforcement mode.
+- Evaluation reports include kept count, `DiscardReason` distribution, mean kill rate with the assertion/exception/timeout breakdown, flaky rate, platform, enforcement mode, and the equivalent-mutant caveat; the audit side reports precision, per-rule hits/misses, evidence-level and retract-reason distributions.
+- Calibrated mutation-kill threshold: `0.5`. Calibration ran `0.2 / 0.5 / 0.8` over both fixtures. Strong proposals measured kill rate `1.0`; weak proposals `0.0`; partial proposals `0.25` (FastAPI) and `0.33` (Flask). At `0.2` the partial tests are kept; at `0.5` and `0.8` only the strong test survives, so `0.5` separates weak from strong with margin on both fixtures. The evidence is in `calibration.json` and `summary.md` of each run.
 
 ## Code conventions
 
@@ -214,6 +217,8 @@ Development happens on Windows (Git Bash). `resource` is POSIX-only. POSIX enfor
 - Run audit triage: `python -m pytest tests/test_triage.py`; cross-check: `python -m pytest tests/test_cross_check.py`
 - Run reproduction/grading: `python -m pytest tests/test_repro.py`, `python -m pytest tests/test_grade.py`
 - Run test pipeline: `python -m pytest tests/test_pipeline.py`
+- Run evaluation tests: `python -m pytest tests/test_evaluation.py`
+- Run the evaluation baseline: `python -m evaluation` (writes under `eval/reports/`); `python -m evaluation --no-write` prints metrics only
 - Run one test: `python -m pytest tests/test_runner.py::test_runner_strong_passes_and_covers_target`
 
 Tests invoke pytest inside a sandbox subprocess against `tests/fixtures/sample_project` and `tests/fixtures/pipeline_project`; fixture tests are excluded from the outer collection. The README is still pending and must state that production isolation uses containers even though v1 uses `subprocess` + resource limits.
