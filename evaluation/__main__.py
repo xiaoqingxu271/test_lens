@@ -16,7 +16,10 @@ def main(argv: list[str] | None = None) -> int:
         "--fixture",
         action="append",
         default=None,
-        help="fixture project directory (default: all under eval/fixtures)",
+        help=(
+            "fixture project directory "
+            "(default: all packaged under evaluation/fixtures)"
+        ),
     )
     parser.add_argument(
         "--output",

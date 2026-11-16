@@ -117,10 +117,10 @@ rule_scan -> llm_triage -> cross_check -> sandbox_repro -> grade_and_emit
 
 ## Evaluation baseline
 
-The vendored fixtures are:
+The vendored fixtures ship inside the `evaluation` package:
 
-- `eval/fixtures/fastapi_project`
-- `eval/fixtures/flask_project`
+- `evaluation/fixtures/fastapi_project`
+- `evaluation/fixtures/flask_project`
 
 Each is self-contained and offline; decorators use local stubs, so no framework
 installation or network access is needed. `labels.json` records expected
@@ -128,7 +128,8 @@ defects, known false positives, and known false negatives by exact source
 marker. `proposals.json` supplies fixed fake proposals.
 
 `python -m evaluation` writes `report.json`, `calibration.json`, and
-`summary.md` under the timestamped directory `eval/reports/<timestamp>/`.
+`summary.md` under the timestamped directory `eval/reports/<timestamp>/`
+relative to the current working directory.
 Reports include kept tests, discard-reason distribution, mean kill rate with
 the assertion/exception/timeout breakdown, flaky rate, platform, enforcement
 mode, audit precision, per-rule hits and false positives, evidence-level and
@@ -151,6 +152,12 @@ whether enforcement was `enforced` or `best-effort`.
 isolation requires containers.** The deterministic evaluation baseline is
 Linux; the development environment is Windows/Git Bash.
 
+CI (`.github/workflows/ci.yml`) runs the suite and the evaluation baseline on
+Ubuntu for Python 3.10 and 3.12, and fails unless the report says
+`platform=Linux` and `enforcement_mode=enforced`. The Linux `enforced` baseline
+has not been run on the Windows development machine; local Windows reports
+state `best-effort`.
+
 ## Known limitations
 
 - Reproduction templates exist only for R001.
@@ -164,6 +171,9 @@ Linux; the development environment is Windows/Git Bash.
   nested functions are out of scope.
 - No `pip install` is executed for the target project; dependencies must be
   pre-provisioned.
+- Sandbox subprocesses inherit the parent environment. Do not run untrusted
+  projects with secrets in environment variables; production isolation requires
+  containers.
 
 ## Development
 

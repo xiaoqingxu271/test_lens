@@ -19,6 +19,9 @@ packages = ["sandbox", "mutation", "project", "targets", "audit", "llm", "genera
 [project.scripts]
 testlens = "cli.main:main"
 
+[tool.setuptools.package-data]
+evaluation = ["fixtures/*/*.py", "fixtures/*/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 norecursedirs = ["fixtures", ".git", ".venv", "__pycache__"]

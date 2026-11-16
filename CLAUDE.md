@@ -29,7 +29,7 @@ Goal: for small Python web projects (FastAPI/Flask style with clear routes and f
 - `generation/` — prompt construction, deterministic proposal validation, and `generate_tests`; emits candidates only and never executes or writes the target project.
 - `review/` — false-positive cross-check: deterministic rule reviewer, independent reviewer interface and fake, context assembly, and evidence-anchor validation.
 - `pipeline/` — test-side closure: isolated materialization, per-candidate double-run execution, target-local mutation scoring, enumerated discard attribution, and `TestReport`; never writes the target project.
-- `evaluation/` — evaluation harness and metrics over the vendored fixtures; `eval/fixtures/` holds the self-contained FastAPI/Flask projects, labels, and fixed fake proposals; `eval/reports/` is generated output (gitignored).
+- `evaluation/` — evaluation harness and metrics over the vendored fixtures; `evaluation/fixtures/` holds the self-contained FastAPI/Flask projects, labels, and fixed fake proposals as package data; `eval/reports/` under the current working directory is generated output (gitignored).
 - `cli/` — `testlens` entry point: `tests`, `audit`, and `eval` subcommands; it never adds a model client.
 - `storage/` — SQLite projection of test, audit, and evaluation reports with normalized tables plus the full JSON payload.
 
@@ -179,10 +179,10 @@ Rule IDs are used in reports and evaluation grouping. Adding a rule requires upd
 
 ## Evaluation baseline
 
-- Two vendored minimal fixture projects (one FastAPI, one Flask), with pinned dependencies (`eval/requirements.txt`), offline execution, known defects, and known false positives. Decorators use local stubs so no framework install or network is needed. Real OSS projects are optional, pinned by commit, and are not the deterministic baseline.
+- Two vendored minimal fixture projects (one FastAPI, one Flask), shipped as `evaluation` package data with pinned dependencies (`eval/requirements.txt`), offline execution, known defects, and known false positives. Decorators use local stubs so no framework install or network is needed. Real OSS projects are optional, pinned by commit, and are not the deterministic baseline.
 - Labels are marker-based (`labels.json`): each expected defect, false positive, and false negative names an exact source marker, resolved to a line at evaluation time.
 - `proposals.json` supplies fixed deterministic-fake proposals per target; the fake is the default and model identity is recorded in the report.
-- One command: `python -m evaluation` writes timestamped `report.json`, `calibration.json`, and `summary.md` under `eval/reports/`, with fixed seeds, `double_run=true`, and the platform/enforcement mode.
+- One command: `python -m evaluation` writes timestamped `report.json`, `calibration.json`, and `summary.md` under `eval/reports/` relative to the current working directory, with fixed seeds, `double_run=true`, and the platform/enforcement mode.
 - Evaluation reports include kept count, `DiscardReason` distribution, mean kill rate with the assertion/exception/timeout breakdown, flaky rate, platform, enforcement mode, and the equivalent-mutant caveat; the audit side reports precision, per-rule hits/misses, evidence-level and retract-reason distributions.
 - Calibrated mutation-kill threshold: `0.5`. Calibration ran `0.2 / 0.5 / 0.8` over both fixtures. Strong proposals measured kill rate `1.0`; weak proposals `0.0`; partial proposals `0.25` (FastAPI) and `0.33` (Flask). At `0.2` the partial tests are kept; at `0.5` and `0.8` only the strong test survives, so `0.5` separates weak from strong with margin on both fixtures. The evidence is in `calibration.json` and `summary.md` of each run.
 
@@ -214,6 +214,8 @@ Reports are `TestReport` (`kept`, `discarded`, `flaky`, `trace`) and `AuditRepor
 ## Environment note
 
 Development happens on Windows (Git Bash). `resource` is POSIX-only. POSIX enforces `RLIMIT_AS`/`RLIMIT_CPU`; Windows enforces the subprocess timeout and uses `psutil` (optional extra `sandbox`) for best-effort memory/CPU limits. Do not introduce ctypes Job Object code. The deterministic evaluation baseline is Linux; every report states the platform and whether limits were `enforced` or `best-effort`.
+
+CI (`.github/workflows/ci.yml`) runs the suite and `python -m evaluation` on Ubuntu for Python 3.10 and 3.12 and asserts `platform=Linux`, `enforcement_mode=enforced`, `double_run=true`, and `model_kind=fake`. The Linux `enforced` baseline has not been executed on the Windows development machine; local Windows reports state `best-effort`.
 
 ## Commands
 

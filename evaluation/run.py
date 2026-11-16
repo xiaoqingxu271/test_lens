@@ -45,9 +45,13 @@ from .models import (
     FixtureEvaluation,
 )
 
-DEFAULT_FIXTURES = Path(__file__).resolve().parents[1] / "eval" / "fixtures"
-DEFAULT_REPORTS = Path(__file__).resolve().parents[1] / "eval" / "reports"
+DEFAULT_FIXTURES = Path(__file__).resolve().parent / "fixtures"
 DEFAULT_CALIBRATION = (0.2, 0.5, 0.8)
+
+
+def default_reports_root() -> Path:
+    """Reports are written under the current working directory, not the package."""
+    return Path.cwd() / "eval" / "reports"
 
 
 def _evaluate_fixture(
@@ -233,7 +237,7 @@ def run_evaluation(
         report,
         Path(output_root).expanduser().resolve()
         if output_root is not None
-        else DEFAULT_REPORTS,
+        else default_reports_root(),
     )
 
 
