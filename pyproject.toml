@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "testlens"
+version = "0.1.0"
+description = "Sandbox execution and mutation validation for interface test generation and code audit"
+requires-python = ">=3.10"
+dependencies = ["pydantic>=2.0"]
+
+[project.optional-dependencies]
+sandbox = ["psutil>=5.9"]
+dev = ["pytest>=8.0", "psutil>=5.9"]
+
+[tool.setuptools]
+packages = ["sandbox", "mutation"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["fixtures", ".git", ".venv", "__pycache__"]
+pythonpath = ["."]
+addopts = "-ra"
