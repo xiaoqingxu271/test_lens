@@ -3,9 +3,38 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 
-from .run import DEFAULT_FIXTURES, run_evaluation
+from sandbox.container import (
+    ContainerConfig,
+    ContainerRuntime,
+    SandboxBackend,
+)
+from sandbox.runner import SandboxConfig
+
+from .run import run_evaluation
+
+
+def _sandbox_config(
+    parser: argparse.ArgumentParser, args: argparse.Namespace
+) -> SandboxConfig:
+    backend = SandboxBackend(args.sandbox_backend)
+    container = None
+    if backend is SandboxBackend.CONTAINER:
+        if not args.sandbox_image:
+            parser.error(
+                "--sandbox-image is required when --sandbox-backend is container"
+            )
+        container = ContainerConfig(
+            image=args.sandbox_image,
+            runtime=ContainerRuntime(args.sandbox_runtime),
+        )
+    elif args.sandbox_image:
+        parser.error("--sandbox-image requires --sandbox-backend container")
+    return SandboxConfig(
+        double_run=True,
+        backend=backend,
+        container=container,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -33,7 +62,23 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="run and print metrics without writing a report",
     )
+    parser.add_argument(
+        "--sandbox-backend",
+        choices=[item.value for item in SandboxBackend],
+        default=SandboxBackend.SUBPROCESS.value,
+    )
+    parser.add_argument(
+        "--sandbox-image",
+        default=None,
+        help="container image; required for --sandbox-backend container",
+    )
+    parser.add_argument(
+        "--sandbox-runtime",
+        choices=[item.value for item in ContainerRuntime],
+        default=ContainerRuntime.DOCKER.value,
+    )
     args = parser.parse_args(argv)
+    config = _sandbox_config(parser, args)
 
     report = run_evaluation(
         fixtures=args.fixture,
@@ -41,6 +86,7 @@ def main(argv: list[str] | None = None) -> int:
         threshold=args.threshold,
         seed=args.seed,
         write=not args.no_write,
+        sandbox_config=config,
     )
     if report.output_dir:
         print(report.output_dir)

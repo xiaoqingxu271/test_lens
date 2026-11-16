@@ -347,3 +347,23 @@ def test_evaluation_writes_reports_and_is_deterministic(tmp_path):
 
     assert _stable(first) == _stable(second)
     assert first.output_dir != second.output_dir
+
+
+def test_evaluation_module_cli_requires_an_image_for_containers(monkeypatch):
+    import pytest
+
+    import evaluation.__main__ as evaluation_main
+
+    with pytest.raises(SystemExit) as exc_info:
+        evaluation_main.main(["--sandbox-backend", "container"])
+    assert exc_info.value.code == 2
+
+
+def test_evaluation_module_cli_rejects_an_image_without_the_backend():
+    import pytest
+
+    import evaluation.__main__ as evaluation_main
+
+    with pytest.raises(SystemExit) as exc_info:
+        evaluation_main.main(["--sandbox-image", "image:1"])
+    assert exc_info.value.code == 2
