@@ -1,9 +1,14 @@
 # TestLens
 
-TestLens is a v1 prototype for small Python web projects (FastAPI/Flask style)
+TestLens is a prototype for small Python web projects (FastAPI/Flask style)
 where a model never decides what is true. The model only proposes candidates;
 sandboxed execution, mutation scoring, deterministic rules, and an independent
 cross-check decide what survives. Every rejection carries an enumerated reason.
+
+Version 2.0.0 adds two opt-in layers on top of the deterministic v1 baseline:
+a container sandbox backend (Linux/Docker) and a real-model/replay client layer.
+The deterministic fake remains the default, and the evaluation baseline stays
+offline.
 
 Two pipelines share one discipline: **candidate → verification → attribution →
 graded output**. A test is kept only when it passes the sandbox and reaches the

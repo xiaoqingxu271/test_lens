@@ -409,12 +409,21 @@ def render_summary(report: EvaluationReport) -> str:
             f"| {row.project} | {row.threshold} | {row.kept} | {distribution} |"
         )
 
+    if trace.model_kind is ModelKind.REAL:
+        model_caveat = (
+            "Model proposals come from a labeled real/replay run and are "
+            "excluded from deterministic baseline comparisons."
+        )
+    else:
+        model_caveat = (
+            "Model proposals are deterministic fake responses from the fixture "
+            "corpus, not real-model output."
+        )
     lines.extend(
         [
             "",
-            "Caveats: equivalent mutants are not detected in v1, so the observed "
-            "kill-rate ceiling is depressed. Model proposals are deterministic "
-            "fake responses from the fixture corpus, not real-model output.",
+            "Caveats: equivalent mutants are not detected, so the observed "
+            f"kill-rate ceiling is depressed. {model_caveat}",
             "",
         ]
     )
