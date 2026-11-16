@@ -21,6 +21,7 @@ from typing import Any
 
 from .models import (
     FinishReason,
+    LLMCallStats,
     LLMRequest,
     LLMResponse,
     LLMPurpose,
@@ -169,12 +170,14 @@ class DeterministicFakeLLM:
         self._responses = dict(responses or {})
         self._responder = responder or default_responder
         self.calls: list[LLMRequest] = []
+        self.stats = LLMCallStats()
 
     def complete(self, request: LLMRequest) -> LLMResponse:
         text = self._responses.get(request.request_id)
         if text is None:
             text = self._responder(request)
         self.calls.append(request)
+        self.stats.calls += 1
         return LLMResponse(
             request_id=request.request_id,
             text=text,

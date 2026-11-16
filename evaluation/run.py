@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import tempfile
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,8 +24,9 @@ from generation.generate import (
     SandboxUnavailableError,
     generate_tests,
 )
+from llm.base import LLMClient
 from llm.fake import FAKE_MODEL_ID, DeterministicFakeLLM
-from llm.models import ModelKind
+from llm.models import LLMCallStats, ModelKind
 from pipeline.models import TestReport
 from pipeline.run import run_test_pipeline
 from review.cross_check import cross_check, subjects_from_candidates
@@ -63,7 +64,8 @@ def _evaluate_fixture(
     seed: int,
     config: SandboxConfig,
     warnings: set[str],
-) -> tuple[FixtureEvaluation, TestReport]:
+    llm_factory: Callable[[Mapping[str, str] | None], LLMClient],
+) -> tuple[FixtureEvaluation, TestReport, LLMCallStats]:
     profile = ProjectProfile(
         profile_id=root.name,
         root=root,
@@ -72,7 +74,7 @@ def _evaluate_fixture(
     )
     selection = select_targets(profile)
     responses = load_proposals(root)
-    llm = DeterministicFakeLLM(responses)
+    llm = llm_factory(responses)
     generation = generate_tests(
         profile,
         selection,
@@ -97,7 +99,7 @@ def _evaluate_fixture(
         raise ValueError("evaluation reports require double_run=true")
 
     scan = scan_rules(profile)
-    triage = llm_triage(profile, scan, DeterministicFakeLLM())
+    triage = llm_triage(profile, scan, llm_factory(None))
     if triage.rejected:
         warnings.add(
             f"{root.name}: {len(triage.rejected)} triage drafts rejected"
@@ -136,6 +138,19 @@ def _evaluate_fixture(
             "reproduce the claim"
         )
 
+    generation_trace = generation.trace
+    triage_trace = triage.trace
+    usage = LLMCallStats(
+        calls=generation_trace.llm_calls + triage_trace.llm_calls,
+        retries=generation_trace.llm_retries + triage_trace.llm_retries,
+        prompt_tokens=(
+            generation_trace.prompt_tokens + triage_trace.prompt_tokens
+        ),
+        completion_tokens=(
+            generation_trace.completion_tokens + triage_trace.completion_tokens
+        ),
+        replayed=generation_trace.replayed or triage_trace.replayed,
+    )
     return (
         FixtureEvaluation(
             project=root.name,
@@ -145,6 +160,7 @@ def _evaluate_fixture(
             audit=summarize_audit_side(audit_report, labels),
         ),
         test_report,
+        usage,
     )
 
 
@@ -158,11 +174,20 @@ def run_evaluation(
     sandbox_config: SandboxConfig | None = None,
     health_timeout_seconds: float = 30.0,
     calibration_thresholds: Sequence[float] = DEFAULT_CALIBRATION,
+    llm_factory: Callable[[Mapping[str, str] | None], LLMClient] | None = None,
 ) -> EvaluationReport:
     if not 0.0 <= threshold <= 1.0:
         raise ValueError("threshold must be between 0 and 1")
     if any(not 0.0 <= value <= 1.0 for value in calibration_thresholds):
         raise ValueError("calibration thresholds must be between 0 and 1")
+
+    factory = llm_factory or (
+        lambda responses=None: DeterministicFakeLLM(responses)
+    )
+    probe = factory(None)
+    model_kind = getattr(probe, "model_kind", ModelKind.FAKE)
+    model_id = getattr(probe, "model_id", FAKE_MODEL_ID)
+    replayed = bool(getattr(probe, "replayed", False))
 
     started_at = datetime.now(timezone.utc).isoformat()
     started = time.perf_counter()
@@ -190,10 +215,11 @@ def run_evaluation(
     warnings: set[str] = set()
     fixture_reports: list[FixtureEvaluation] = []
     calibration: list[CalibrationRow] = []
+    usage = LLMCallStats()
 
     for root in roots:
         labels = load_labels(root)
-        evaluation, test_report = _evaluate_fixture(
+        evaluation, test_report, fixture_usage = _evaluate_fixture(
             root,
             labels,
             health,
@@ -201,8 +227,18 @@ def run_evaluation(
             seed=seed,
             config=config,
             warnings=warnings,
+            llm_factory=factory,
         )
         fixture_reports.append(evaluation)
+        usage = LLMCallStats(
+            calls=usage.calls + fixture_usage.calls,
+            retries=usage.retries + fixture_usage.retries,
+            prompt_tokens=usage.prompt_tokens + fixture_usage.prompt_tokens,
+            completion_tokens=(
+                usage.completion_tokens + fixture_usage.completion_tokens
+            ),
+            replayed=usage.replayed or fixture_usage.replayed,
+        )
         calibration.extend(
             calibration_rows(
                 root.name, evaluation.test, calibration_thresholds
@@ -213,9 +249,14 @@ def run_evaluation(
         started_at=started_at,
         elapsed_ms=int((time.perf_counter() - started) * 1000),
         fixtures=[root.name for root in roots],
-        model_kind=ModelKind.FAKE,
-        model_id=FAKE_MODEL_ID,
+        model_kind=model_kind,
+        model_id=model_id,
         prompt_template_version=GENERATION_TEMPLATE_VERSION,
+        replayed=replayed or usage.replayed,
+        llm_calls=usage.calls,
+        llm_retries=usage.retries,
+        prompt_tokens=usage.prompt_tokens,
+        completion_tokens=usage.completion_tokens,
         seed=seed,
         threshold=threshold,
         calibration_thresholds=list(calibration_thresholds),
@@ -236,12 +277,14 @@ def run_evaluation(
     )
     if not write:
         return report
-    return write_evaluation(
-        report,
+    root = (
         Path(output_root).expanduser().resolve()
         if output_root is not None
-        else default_reports_root(),
+        else default_reports_root()
     )
+    if model_kind is ModelKind.REAL:
+        root = root / ("replay" if replayed else "real")
+    return write_evaluation(report, root)
 
 
 def render_summary(report: EvaluationReport) -> str:
@@ -252,6 +295,10 @@ def render_summary(report: EvaluationReport) -> str:
         f"- started_at: `{trace.started_at}`",
         f"- elapsed_ms: {trace.elapsed_ms}",
         f"- model: `{trace.model_kind.value}` / `{trace.model_id}`",
+        f"- replayed: {trace.replayed}",
+        f"- model_calls: {trace.llm_calls} (retries: {trace.llm_retries})",
+        f"- model_tokens: prompt={trace.prompt_tokens} "
+        f"completion={trace.completion_tokens}",
         f"- prompt_template: `{trace.prompt_template_version}`",
         f"- threshold: {trace.threshold}",
         f"- seed: {trace.seed}",

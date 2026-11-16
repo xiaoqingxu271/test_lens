@@ -1,8 +1,8 @@
 """TestLens CLI.
 
 The CLI is an entry point, not a new pipeline. It calls the same stage
-functions as the library and never adds a model client: proposals come from
-the deterministic fake, optionally seeded by a fixed JSON response file.
+functions as the library. The deterministic fake is the default; the model
+source is selected through ``llm/options.py`` (fake, replay, or real).
 """
 
 from __future__ import annotations
@@ -22,7 +22,13 @@ from audit.triage import llm_triage
 from evaluation.labels import FixtureError, load_proposals_file
 from evaluation.run import run_evaluation
 from generation.generate import SandboxUnavailableError, generate_tests
-from llm.fake import DeterministicFakeLLM
+from llm.errors import LLMError
+from llm.options import (
+    add_llm_arguments,
+    build_llm,
+    build_llm_factory,
+    options_from_args,
+)
 from pipeline.run import run_test_pipeline
 from review.cross_check import cross_check, subjects_from_candidates
 from review.fake import DeterministicReviewer
@@ -44,6 +50,7 @@ from targets.selection import select_targets
 EXIT_OK = 0
 EXIT_USAGE = 2
 EXIT_SANDBOX = 3
+EXIT_MODEL = 4
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -69,6 +76,7 @@ def build_parser() -> argparse.ArgumentParser:
     tests.add_argument("--db", default=None, help="SQLite metadata path")
     tests.add_argument("--json", action="store_true", dest="as_json")
     _add_sandbox_args(tests)
+    add_llm_arguments(tests)
 
     audit = sub.add_parser("audit", help="scan rules and grade findings")
     audit.add_argument("project", help="target project directory")
@@ -76,6 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--db", default=None, help="SQLite metadata path")
     audit.add_argument("--json", action="store_true", dest="as_json")
     _add_sandbox_args(audit)
+    add_llm_arguments(audit)
 
     evaluate = sub.add_parser("eval", help="run the fixture evaluation baseline")
     evaluate.add_argument("--output", default=None, help="report output root")
@@ -84,6 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--db", default=None, help="SQLite metadata path")
     evaluate.add_argument("--json", action="store_true", dest="as_json")
     _add_sandbox_args(evaluate)
+    add_llm_arguments(evaluate)
 
     return parser
 
@@ -176,7 +186,8 @@ def _tests(args) -> int:
         if args.proposals
         else None
     )
-    llm = DeterministicFakeLLM(responses)
+    options = options_from_args(args)
+    llm = build_llm(options, responses)
     generation = generate_tests(
         profile,
         selection,
@@ -217,8 +228,10 @@ def _tests(args) -> int:
 def _audit(args) -> int:
     root = _project(args.project)
     profile = _profile(root)
+    options = options_from_args(args)
+    llm = build_llm(options)
     scan = scan_rules(profile)
-    triage = llm_triage(profile, scan, DeterministicFakeLLM())
+    triage = llm_triage(profile, scan, llm)
     review = cross_check(
         profile,
         scan,
@@ -245,8 +258,8 @@ def _audit(args) -> int:
                 platform=config.platform,
                 enforcement_mode=config.enforcement_mode.value,
                 double_run=config.double_run,
-                model_kind="fake",
-                model_id=DeterministicFakeLLM().model_id,
+                model_kind=llm.model_kind.value,
+                model_id=llm.model_id,
             )
 
     def summary() -> None:
@@ -271,12 +284,14 @@ def _audit(args) -> int:
 
 
 def _evaluation(args) -> int:
+    options = options_from_args(args)
     report = run_evaluation(
         output_root=args.output,
         threshold=args.threshold,
         seed=args.seed,
         write=True,
         sandbox_config=_sandbox_config(args),
+        llm_factory=build_llm_factory(options),
     )
     if args.db:
         with open_database(args.db) as conn:
@@ -313,6 +328,9 @@ def main(argv: list[str] | None = None) -> int:
     except SandboxUnavailableError as exc:
         print(f"sandbox unavailable: {exc}", file=sys.stderr)
         return EXIT_SANDBOX
+    except LLMError as exc:
+        print(f"model error: {exc}", file=sys.stderr)
+        return EXIT_MODEL
     except (FixtureError, OSError, sqlite3.Error, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_USAGE

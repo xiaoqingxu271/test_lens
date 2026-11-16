@@ -208,3 +208,82 @@ def test_cli_rejects_an_image_without_the_container_backend(tmp_path, capsys):
 
     assert exit_code == 2
     assert "requires --sandbox-backend container" in capsys.readouterr().err
+
+
+def _empty_transcript(tmp_path: Path) -> Path:
+    path = tmp_path / "transcript.json"
+    path.write_text(
+        json.dumps(
+            {
+                "transcript_version": 1,
+                "created_by": "testlens",
+                "model_id": "recorded-model",
+                "model_kind": "real",
+                "recordings": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_cli_rejects_model_option_misuse(tmp_path, capsys):
+    transcript = _empty_transcript(tmp_path)
+
+    assert cli.main(["audit", str(AUDIT_ROOT), "--transcript", str(transcript)]) == 2
+
+    assert cli.main(["audit", str(AUDIT_ROOT), "--llm", "replay"]) == 2
+
+    assert cli.main(["audit", str(AUDIT_ROOT), "--llm", "real"]) == 2
+
+    assert (
+        cli.main(
+            [
+                "audit",
+                str(AUDIT_ROOT),
+                "--llm",
+                "real",
+                "--model-id",
+                "model-x",
+                "--transcript",
+                str(transcript),
+            ]
+        )
+        == 2
+    )
+
+
+def test_replay_without_a_recording_exits_with_the_model_code(tmp_path, capsys):
+    transcript = _empty_transcript(tmp_path)
+
+    exit_code = cli.main(
+        [
+            "audit",
+            str(AUDIT_ROOT),
+            "--llm",
+            "replay",
+            "--transcript",
+            str(transcript),
+        ]
+    )
+
+    assert exit_code == 4
+    assert "no recorded response" in capsys.readouterr().err
+
+
+def test_missing_credentials_exit_with_the_model_code(monkeypatch, capsys):
+    monkeypatch.delenv("TESTLENS_LLM_API_KEY", raising=False)
+
+    exit_code = cli.main(
+        ["audit", str(AUDIT_ROOT), "--llm", "real", "--model-id", "model-x"]
+    )
+
+    assert exit_code == 4
+    assert "TESTLENS_LLM_API_KEY" in capsys.readouterr().err
+
+
+def test_eval_cli_reports_usage_errors_for_model_options(capsys):
+    exit_code = cli.main(["eval", "--llm", "replay"])
+
+    assert exit_code == 2
+    assert "--transcript" in capsys.readouterr().err

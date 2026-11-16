@@ -343,7 +343,7 @@ def test_evaluation_fixtures_are_packaged_with_the_module():
     ]
 
 
-def test_llm_and_cli_packages_have_no_network_client_imports():
+def test_only_the_provider_adapter_imports_network_clients():
     roots = [
         Path(llm.__file__).resolve().parent,
         Path(__file__).resolve().parents[1] / "cli",
@@ -356,8 +356,29 @@ def test_llm_and_cli_packages_have_no_network_client_imports():
         "urllib.request",
         "socket.socket",
     )
+    allowed = {Path(llm.__file__).resolve().parent / "real.py"}
     for root in roots:
         for path in root.glob("*.py"):
+            if path in allowed:
+                continue
             text = path.read_text(encoding="utf-8")
             for token in forbidden:
                 assert token not in text, f"{path.name} imports {token}"
+
+
+def test_llm_contract_additions_are_optional_and_defaulted():
+    from llm.models import FinishReason, LLMRequest, LLMResponse
+
+    assert {"attempts", "replayed"} <= set(LLMResponse.model_fields)
+    assert LLMResponse.model_fields["attempts"].default == 1
+    assert LLMResponse.model_fields["replayed"].default is False
+    assert FinishReason.UNKNOWN.value == "unknown"
+    assert {
+        "request_id",
+        "purpose",
+        "prompt_template_version",
+        "system",
+        "prompt",
+        "seed",
+        "temperature",
+    } <= set(LLMRequest.model_fields)

@@ -146,11 +146,52 @@ rule_scan -> llm_triage -> cross_check -> sandbox_repro -> grade_and_emit
 ## Determinism and models
 
 - The default and evaluation model is `DeterministicFakeLLM`. It never reads
-  the clock, randomness, or the network.
-- No real model client exists in v1. A future real-model run must be labeled
-  separately in reports.
+  the clock, randomness, or the network. CI runs only the fake and offline
+  replay; no workflow step contacts a provider.
+- `--llm replay --transcript FILE` replays a recorded transcript byte-for-byte.
+  Replay validates purpose, template version, prompt digest, response digest,
+  and an optional `--model-id`; a mismatch is an enumerated error and never
+  falls back to the fake or another recording.
+- `--llm real --model-id ID` uses the single OpenAI-compatible adapter behind
+  `ProviderTransport`. The credential is read at call time from
+  `TESTLENS_LLM_API_KEY` (overridable in code) and is never logged or stored.
+  The endpoint defaults to `https://api.openai.com/v1` and can be overridden
+  with `TESTLENS_LLM_BASE_URL`; HTTPS and certificate verification stay on.
+- `--record-to FILE` writes a versioned transcript for later replay. Writes are
+  atomic, an existing file is refused, and the file stores response text,
+  digests, model identity, finish reason, attempts, and usage — never prompts,
+  system messages, API keys, or headers.
+- A real or replayed run reports `model_kind=real`; replay adds
+  `replayed=true`. Both are excluded from deterministic baseline comparisons.
+- Retries: at most 3 attempts with 1s/2s/4s backoff, only for timeouts, HTTP
+  429, and HTTP 5xx. Auth and invalid-response failures are fatal. Model
+  failures never become empty proposals or fake responses.
+- Per-run budgets default to 200 calls and 500,000 tokens
+  (`--max-calls`, `--max-tokens`); exceeding either raises
+  `LLM_BUDGET_EXCEEDED`. Model/transport/budget failures exit with
+  `EXIT_MODEL=4`.
 - Evaluation uses fixed seeds, fixed proposals, and `double_run=true`; a report
   with double-run disabled is marked and excluded from evaluation.
+
+```bash
+# Replay a recorded transcript without network access.
+testlens audit path/to/project \
+  --llm replay --transcript tests/fixtures/llm/replay_transcript.json
+
+# Manual real-model run; record it for later replay.
+TESTLENS_LLM_API_KEY=... testlens tests path/to/project \
+  --llm real --model-id gpt-4o-mini \
+  --record-to artifacts/transcript.json
+
+# Replay the recorded run.
+testlens tests path/to/project \
+  --llm replay --transcript artifacts/transcript.json
+```
+
+A real or replay evaluation writes under `eval/reports/real/` or
+`eval/reports/replay/`, so it never overwrites the fake baseline. Do not commit
+real transcripts; the only vendored transcript is the test fixture under
+`tests/fixtures/llm/`.
 
 ## Evaluation baseline
 

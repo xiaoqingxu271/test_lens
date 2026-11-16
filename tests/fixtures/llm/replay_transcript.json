@@ -1,0 +1,280 @@
+{
+  "created_by": "testlens",
+  "model_id": "fixture-recorded-model",
+  "model_kind": "real",
+  "recordings": [
+    {
+      "attempts": 1,
+      "finish_reason": "stop",
+      "model_id": "fixture-recorded-model",
+      "model_kind": "real",
+      "prompt_digest": "1d9b990452079bce",
+      "prompt_template_version": "triage-v1",
+      "purpose": "rule_triage",
+      "request_id": "rule_triage::2d27e0db5987664e",
+      "response_digest": "047893fd1518f768",
+      "text": "{\"claim\": \"Mutable default argument(s) shared across calls: options.\", \"finding_id\": \"2d27e0db5987664e\", \"line_end\": 5, \"line_start\": 5, \"rule_id\": \"R001-MUTABLE-DEFAULT\", \"trigger_path\": [\"defects.py:5-5\", \"def dict_default(options={}):\"]}",
+      "usage": {
+        "completion_tokens": 60,
+        "prompt_tokens": 120,
+        "total_tokens": 180
+      }
+    },
+    {
+      "attempts": 1,
+      "finish_reason": "stop",
+      "model_id": "fixture-recorded-model",
+      "model_kind": "real",
+      "prompt_digest": "2885f549abe4ac1e",
+      "prompt_template_version": "triage-v1",
+      "purpose": "rule_triage",
+      "request_id": "rule_triage::57f799d916a6f789",
+      "response_digest": "90c89f9a8775b971",
+      "text": "{\"claim\": \"Mutable default argument(s) shared across calls: items.\", \"finding_id\": \"57f799d916a6f789\", \"line_end\": 1, \"line_start\": 1, \"rule_id\": \"R001-MUTABLE-DEFAULT\", \"trigger_path\": [\"defects.py:1-1\", \"def list_default(items=[]):\"]}",
+      "usage": {
+        "completion_tokens": 60,
+        "prompt_tokens": 120,
+        "total_tokens": 180
+      }
+    },
+    {
+      "attempts": 1,
+      "finish_reason": "stop",
+      "model_id": "fixture-recorded-model",
+      "model_kind": "real",
+      "prompt_digest": "f41d1b5513bfe67d",
+      "prompt_template_version": "triage-v1",
+      "purpose": "rule_triage",
+      "request_id": "rule_triage::728bc018633b5675",
+      "response_digest": "ecd785a79ab79328",
+      "text": "{\"claim\": \"Mutable default argument(s) shared across calls: items.\", \"finding_id\": \"728bc018633b5675\", \"line_end\": 17, \"line_start\": 17, \"rule_id\": \"R001-MUTABLE-DEFAULT\", \"trigger_path\": [\"defects.py:17-17\", \"def list_constructor(items=list()):\"]}",
+      "usage": {
+        "completion_tokens": 60,
+        "prompt_tokens": 120,
+        "total_tokens": 180
+      }
+    },
+    {
+      "attempts": 1,
+      "finish_reason": "stop",
+      "model_id": "fixture-recorded-model",
+      "model_kind": "real",
+      "prompt_digest": "568a3ca454ed5df5",
+      "prompt_template_version": "triage-v1",
+      "purpose": "rule_triage",
+      "request_id": "rule_triage::c5973463912784cf",
+      "response_digest": "1c0325a07a8b94aa",
+      "text": "{\"claim\": \"Mutable default argument(s) shared across calls: values.\", \"finding_id\": \"c5973463912784cf\", \"line_end\": 9, \"line_start\": 9, \"rule_id\": \"R001-MUTABLE-DEFAULT\", \"trigger_path\": [\"defects.py:9-9\", \"def set_default(values=set()):\"]}",
+      "usage": {
+        "completion_tokens": 60,
+        "prompt_tokens": 120,
+        "total_tokens": 180
+      }
+    },
+    {
+      "attempts": 1,
+      "finish_reason": "stop",
+      "model_id": "fixture-recorded-model",
+      "model_kind": "real",
+      "prompt_digest": "10d053054e480798",
+      "prompt_template_version": "triage-v1",
+      "purpose": "rule_triage",
+      "request_id": "rule_triage::f24c3af91a1049ca",
+      "response_digest": "a7aec42deaf09478",
+      "text": "{\"claim\": \"Mutable default argument(s) shared across calls: buffer.\", \"finding_id\": \"f24c3af91a1049ca\", \"line_end\": 13, \"line_start\": 13, \"rule_id\": \"R001-MUTABLE-DEFAULT\", \"trigger_path\": [\"defects.py:13-13\", \"def bytearray_default(buffer=bytearray()):\"]}",
+      "usage": {
+        "completion_tokens": 60,
+        "prompt_tokens": 120,
+        "total_tokens": 180
+      }
+    },
+    {
+      "attempts": 1,
+      "finish_reason": "stop",
+      "model_id": "fixture-recorded-model",
+      "model_kind": "real",
+      "prompt_digest": "a7f54725f0bb90b2",
+      "prompt_template_version": "triage-v1",
+      "purpose": "rule_triage",
+      "request_id": "rule_triage::fe608703aaf0cab2",
+      "response_digest": "8e9a6618266ac75f",
+      "text": "{\"claim\": \"Mutable default argument(s) shared across calls: pair.\", \"finding_id\": \"fe608703aaf0cab2\", \"line_end\": 21, \"line_start\": 21, \"rule_id\": \"R001-MUTABLE-DEFAULT\", \"trigger_path\": [\"defects.py:21-21\", \"def tuple_default(pair=([],)):\"]}",
+      "usage": {
+        "completion_tokens": 60,
+        "prompt_tokens": 120,
+        "total_tokens": 180
+      }
+    },
+    {
+      "attempts": 1,
+      "finish_reason": "stop",
+      "model_id": "fixture-recorded-model",
+      "model_kind": "real",
+      "prompt_digest": "106c19e9d92b5319",
+      "prompt_template_version": "triage-v1",
+      "purpose": "rule_triage",
+      "request_id": "rule_triage::ff074ae6de1f7e74",
+      "response_digest": "2e7c5bc8911bfe54",
+      "text": "{\"claim\": \"Mutable default argument(s) shared across calls: values.\", \"finding_id\": \"ff074ae6de1f7e74\", \"line_end\": 25, \"line_start\": 25, \"rule_id\": \"R001-MUTABLE-DEFAULT\", \"trigger_path\": [\"defects.py:25-25\", \"def comprehension_default(values=[item for item in range(3)]):\"]}",
+      "usage": {
+        "completion_tokens": 60,
+        "prompt_tokens": 120,
+        "total_tokens": 180
+      }
+    },
+    {
+      "attempts": 1,
+      "finish_reason": "stop",
+      "model_id": "fixture-recorded-model",
+      "model_kind": "real",
+      "prompt_digest": "5204277299563c97",
+      "prompt_template_version": "generation-v1",
+      "purpose": "test_generation",
+      "request_id": "test_generation::app.py::create_item",
+      "response_digest": "8397a523c95f7b84",
+      "text": "{\"tests\": [{\"source\": \"from app import create_item\\n\\n\\ndef test_create_item_smoke():\\n    create_item()\\n\", \"test_file\": \"generated/test_app_create_item.py\", \"test_name\": \"test_create_item_smoke\"}]}",
+      "usage": {
+        "completion_tokens": 60,
+        "prompt_tokens": 120,
+        "total_tokens": 180
+      }
+    },
+    {
+      "attempts": 1,
+      "finish_reason": "stop",
+      "model_id": "fixture-recorded-model",
+      "model_kind": "real",
+      "prompt_digest": "b1bc9ab171cdef6d",
+      "prompt_template_version": "generation-v1",
+      "purpose": "test_generation",
+      "request_id": "test_generation::app.py::flask_route",
+      "response_digest": "08af379dca59a61a",
+      "text": "{\"tests\": [{\"source\": \"from app import flask_route\\n\\n\\ndef test_flask_route_smoke():\\n    flask_route()\\n\", \"test_file\": \"generated/test_app_flask_route.py\", \"test_name\": \"test_flask_route_smoke\"}]}",
+      "usage": {
+        "completion_tokens": 60,
+        "prompt_tokens": 120,
+        "total_tokens": 180
+      }
+    },
+    {
+      "attempts": 1,
+      "finish_reason": "stop",
+      "model_id": "fixture-recorded-model",
+      "model_kind": "real",
+      "prompt_digest": "11b6301afceb5aec",
+      "prompt_template_version": "generation-v1",
+      "purpose": "test_generation",
+      "request_id": "test_generation::app.py::multi",
+      "response_digest": "77e35fdf966539b2",
+      "text": "{\"tests\": [{\"source\": \"from app import multi\\n\\n\\ndef test_multi_smoke():\\n    multi()\\n\", \"test_file\": \"generated/test_app_multi.py\", \"test_name\": \"test_multi_smoke\"}]}",
+      "usage": {
+        "completion_tokens": 60,
+        "prompt_tokens": 120,
+        "total_tokens": 180
+      }
+    },
+    {
+      "attempts": 1,
+      "finish_reason": "stop",
+      "model_id": "fixture-recorded-model",
+      "model_kind": "real",
+      "prompt_digest": "99511c0a855e3a83",
+      "prompt_template_version": "generation-v1",
+      "purpose": "test_generation",
+      "request_id": "test_generation::app.py::read_item",
+      "response_digest": "28e264ebdd2f2679",
+      "text": "{\"tests\": [{\"source\": \"from app import read_item\\n\\n\\ndef test_read_item_smoke():\\n    assert callable(read_item)\\n\", \"test_file\": \"generated/test_app_read_item.py\", \"test_name\": \"test_read_item_smoke\"}]}",
+      "usage": {
+        "completion_tokens": 60,
+        "prompt_tokens": 120,
+        "total_tokens": 180
+      }
+    },
+    {
+      "attempts": 1,
+      "finish_reason": "stop",
+      "model_id": "fixture-recorded-model",
+      "model_kind": "real",
+      "prompt_digest": "256a79df12aacec6",
+      "prompt_template_version": "generation-v1",
+      "purpose": "test_generation",
+      "request_id": "test_generation::app.py::two_paths",
+      "response_digest": "a69bec35027fde41",
+      "text": "{\"tests\": [{\"source\": \"from app import two_paths\\n\\n\\ndef test_two_paths_smoke():\\n    two_paths()\\n\", \"test_file\": \"generated/test_app_two_paths.py\", \"test_name\": \"test_two_paths_smoke\"}]}",
+      "usage": {
+        "completion_tokens": 60,
+        "prompt_tokens": 120,
+        "total_tokens": 180
+      }
+    },
+    {
+      "attempts": 1,
+      "finish_reason": "stop",
+      "model_id": "fixture-recorded-model",
+      "model_kind": "real",
+      "prompt_digest": "43c1cce0cc81690a",
+      "prompt_template_version": "generation-v1",
+      "purpose": "test_generation",
+      "request_id": "test_generation::flask_app.py::bye",
+      "response_digest": "629dd9e91b1acc7e",
+      "text": "{\"tests\": [{\"source\": \"from flask_app import bye\\n\\n\\ndef test_bye_smoke():\\n    bye()\\n\", \"test_file\": \"generated/test_flask_app_bye.py\", \"test_name\": \"test_bye_smoke\"}]}",
+      "usage": {
+        "completion_tokens": 60,
+        "prompt_tokens": 120,
+        "total_tokens": 180
+      }
+    },
+    {
+      "attempts": 1,
+      "finish_reason": "stop",
+      "model_id": "fixture-recorded-model",
+      "model_kind": "real",
+      "prompt_digest": "973388c74cdcd640",
+      "prompt_template_version": "generation-v1",
+      "purpose": "test_generation",
+      "request_id": "test_generation::flask_app.py::hello",
+      "response_digest": "942d042a1a59c612",
+      "text": "{\"tests\": [{\"source\": \"from flask_app import hello\\n\\n\\ndef test_hello_smoke():\\n    hello()\\n\", \"test_file\": \"generated/test_flask_app_hello.py\", \"test_name\": \"test_hello_smoke\"}]}",
+      "usage": {
+        "completion_tokens": 60,
+        "prompt_tokens": 120,
+        "total_tokens": 180
+      }
+    },
+    {
+      "attempts": 1,
+      "finish_reason": "stop",
+      "model_id": "fixture-recorded-model",
+      "model_kind": "real",
+      "prompt_digest": "86915dbcea4aabac",
+      "prompt_template_version": "generation-v1",
+      "purpose": "test_generation",
+      "request_id": "test_generation::flask_app.py::kw",
+      "response_digest": "46e75864a4a5c730",
+      "text": "{\"tests\": [{\"source\": \"from flask_app import kw\\n\\n\\ndef test_kw_smoke():\\n    kw()\\n\", \"test_file\": \"generated/test_flask_app_kw.py\", \"test_name\": \"test_kw_smoke\"}]}",
+      "usage": {
+        "completion_tokens": 60,
+        "prompt_tokens": 120,
+        "total_tokens": 180
+      }
+    },
+    {
+      "attempts": 1,
+      "finish_reason": "stop",
+      "model_id": "fixture-recorded-model",
+      "model_kind": "real",
+      "prompt_digest": "fc7f2c72c679326b",
+      "prompt_template_version": "generation-v1",
+      "purpose": "test_generation",
+      "request_id": "test_generation::flask_app.py::kw_get",
+      "response_digest": "8a57c4aec624662c",
+      "text": "{\"tests\": [{\"source\": \"from flask_app import kw_get\\n\\n\\ndef test_kw_get_smoke():\\n    kw_get()\\n\", \"test_file\": \"generated/test_flask_app_kw_get.py\", \"test_name\": \"test_kw_get_smoke\"}]}",
+      "usage": {
+        "completion_tokens": 60,
+        "prompt_tokens": 120,
+        "total_tokens": 180
+      }
+    }
+  ],
+  "transcript_version": 1
+}

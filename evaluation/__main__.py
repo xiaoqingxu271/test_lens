@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import sys
 
+from llm.errors import LLMError
+from llm.options import (
+    add_llm_arguments,
+    build_llm_factory,
+    options_from_args,
+)
 from sandbox.container import (
     ContainerConfig,
     ContainerRuntime,
@@ -77,17 +84,27 @@ def main(argv: list[str] | None = None) -> int:
         choices=[item.value for item in ContainerRuntime],
         default=ContainerRuntime.DOCKER.value,
     )
+    add_llm_arguments(parser)
     args = parser.parse_args(argv)
     config = _sandbox_config(parser, args)
+    try:
+        llm_options = options_from_args(args)
+    except ValueError as exc:
+        parser.error(str(exc))
 
-    report = run_evaluation(
-        fixtures=args.fixture,
-        output_root=args.output,
-        threshold=args.threshold,
-        seed=args.seed,
-        write=not args.no_write,
-        sandbox_config=config,
-    )
+    try:
+        report = run_evaluation(
+            fixtures=args.fixture,
+            output_root=args.output,
+            threshold=args.threshold,
+            seed=args.seed,
+            write=not args.no_write,
+            sandbox_config=config,
+            llm_factory=build_llm_factory(llm_options),
+        )
+    except LLMError as exc:
+        print(f"model error: {exc}", file=sys.stderr)
+        return 4
     if report.output_dir:
         print(report.output_dir)
     else:

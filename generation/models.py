@@ -57,6 +57,11 @@ class GenerationTrace(BaseModel):
     llm_model_kind: ModelKind
     llm_model_id: str
     prompt_template_version: str
+    llm_calls: int = 0
+    llm_retries: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    replayed: bool = False
     targets_considered: int = 0
     tests_proposed: int = 0
     tests_accepted: int = 0

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-TestLens v1.0.0 is released. The validation infrastructure (sandbox runner, double-run flaky detection, mutation operators and scoring), deterministic target selection, deterministic rule scan (R001–R005), the LLM interface with a deterministic fake, sandbox-gated candidate test generation, line-anchored audit triage, the false-positive cross-check, sandbox reproduction, evidence grading/`AuditReport` emission, the test-side pipeline closure, the evaluation harness on vendored fixtures, the CLI, README, and SQLite metadata are implemented. v2 begins with the opt-in container sandbox backend (increment 2A); `docs/v2-spec.md` records its accepted design. This file remains the single source of truth; the confirmed design decisions at the end are normative. Continue in Build order; do not add a real model client or an `LLM_INDEPENDENT` path before its v2 specification is confirmed.
+TestLens v1.0.0 is released. The validation infrastructure (sandbox runner, double-run flaky detection, mutation operators and scoring), deterministic target selection, deterministic rule scan (R001–R005), the LLM interface with a deterministic fake, sandbox-gated candidate test generation, line-anchored audit triage, the false-positive cross-check, sandbox reproduction, evidence grading/`AuditReport` emission, the test-side pipeline closure, the evaluation harness on vendored fixtures, the CLI, README, and SQLite metadata are implemented. v2 adds the opt-in container sandbox backend (2A, implemented) and the real-model/replay client layer (2B, implemented); `docs/v2-spec.md` and `docs/v2-spec-2b.md` record their accepted designs. This file remains the single source of truth; the confirmed design decisions at the end are normative. Continue in Build order; do not add an `LLM_INDEPENDENT` path before its v2 specification is confirmed.
 
 Goal: for small Python web projects (FastAPI/Flask style with clear routes and function boundaries), an LLM only proposes candidates. Sandboxed execution, mutation scoring, and an independent false-positive review decide what survives; attribution explains every rejection.
 
@@ -21,17 +21,17 @@ Goal: for small Python web projects (FastAPI/Flask style with clear routes and f
 ## Source layout
 
 - `sandbox/` — `runner.py` (frozen execution report), `double_run.py` (flaky merge), `health.py` (generation gate: acceptance probe), `container.py` (opt-in Docker backend availability and command construction), `Dockerfile` (default sandbox image), `_pytest_plugin.py` (child-side test reporting and target-symbol coverage).
-- `docs/` — `v2-spec.md` (accepted 2A container sandbox specification).
+- `docs/` — `v2-spec.md` (accepted 2A container sandbox specification) and `v2-spec-2b.md` (accepted real-model and replay specification).
 - `mutation/` — fixed AST operator set and mutation scoring.
 - `project/` — deterministic Python file discovery, parsing, and enumerated skip reasons.
 - `targets/` — AST route extraction and target-selection reports.
 - `audit/` — rule scan, R001–R005 handlers, LLM triage, sandbox reproduction, and evidence grading; `RuleCandidate` and `TriageDraft` are intermediate stage outputs, not final `Finding`s.
-- `llm/` — provider-neutral request/response contracts, the `LLMClient` protocol, and the deterministic fake.
+- `llm/` — provider-neutral request/response contracts, the `LLMClient` protocol, the deterministic fake, record/replay clients, the budget wrapper, and the single real-provider adapter. Provider credentials and network calls exist only here.
 - `generation/` — prompt construction, deterministic proposal validation, and `generate_tests`; emits candidates only and never executes or writes the target project.
 - `review/` — false-positive cross-check: deterministic rule reviewer, independent reviewer interface and fake, context assembly, and evidence-anchor validation.
 - `pipeline/` — test-side closure: isolated materialization, per-candidate double-run execution, target-local mutation scoring, enumerated discard attribution, and `TestReport`; never writes the target project.
 - `evaluation/` — evaluation harness and metrics over the vendored fixtures; `evaluation/fixtures/` holds the self-contained FastAPI/Flask projects, labels, and fixed fake proposals as package data; `eval/reports/` under the current working directory is generated output (gitignored).
-- `cli/` — `testlens` entry point: `tests`, `audit`, and `eval` subcommands; it never adds a model client.
+- `cli/` — `testlens` entry point: `tests`, `audit`, and `eval` subcommands; it selects the model source through `llm/options.py` and never implements a provider.
 - `storage/` — SQLite projection of test, audit, and evaluation reports with normalized tables plus the full JSON payload.
 
 ## Build order (non-negotiable)
@@ -189,7 +189,7 @@ Rule IDs are used in reports and evaluation grouping. Adding a rule requires upd
 
 ### CLI and SQLite metadata (v1)
 
-`cli/main.py` exposes `tests`, `audit`, and `eval`. The console script is `testlens`; `python -m cli` works without installation. The CLI only calls existing stage functions and uses the deterministic fake; `--proposals FILE` seeds fake responses, `--json` prints the report, `--output DIR` writes a timestamped JSON report, and `--db PATH` persists metadata. It never adds a real model client.
+`cli/main.py` exposes `tests`, `audit`, and `eval`. The console script is `testlens`; `python -m cli` works without installation. The CLI only calls existing stage functions; the deterministic fake is the default, and `--llm replay|real` selects the 2B clients through `llm/options.py`. `--proposals FILE` seeds fake responses, `--json` prints the report, `--output DIR` writes a timestamped JSON report, and `--db PATH` persists metadata. Model/transport/budget failures exit with `EXIT_MODEL=4`; the CLI never implements a provider itself.
 
 `storage/db.py` initializes a versioned SQLite schema (`schema_meta`). `runs` stores header metadata, summary counts, and the complete JSON payload; `kept_tests`, `discarded_tests`, `findings`, `retracted`, and `evaluation_fixtures` provide queryable projections. Enums are stored by their stable values. Stage reports remain Pydantic objects at the boundary.
 
@@ -225,6 +225,21 @@ These decisions are normative for the container backend. `docs/v2-spec.md` holds
 - New report fields are additive only: `SandboxConfig.backend`, `SandboxConfig.container`, `ExecutionTrace.backend`, `SandboxHealth.backend`, `TestPipelineTrace.sandbox_backend`, and `EvaluationTrace.sandbox_backend`. `SandboxHealthFailure` adds `CONTAINER_RUNTIME_UNAVAILABLE`, `CONTAINER_IMAGE_UNAVAILABLE`, `CONTAINER_PROBE_FAILED`, and `CONTAINER_UNSUPPORTED_PLATFORM`.
 - The default image contract is Python 3.12 + pytest, no framework or project dependencies. Projects with dependencies supply their own image; TestLens never runs `pip install` per run. CI builds `sandbox/Dockerfile` and verifies the container evaluation baseline.
 
+## Confirmed design decisions (v2 / 2B real LLM and replay)
+
+These decisions are normative for the real-model layer. `docs/v2-spec-2b.md` holds the full design.
+
+- The deterministic fake remains the default for `tests`, `audit`, and `eval`. CI runs only the fake and offline replay; no workflow step initiates a real provider request.
+- `LLMRequest`, `LLMResponse`, and `LLMClient` keep their existing fields. Additive optional fields: `LLMResponse.attempts` (default 1), `LLMResponse.replayed` (default false), and `FinishReason.UNKNOWN`.
+- Transcripts are versioned JSON, sorted by `request_id`, written atomically. They store response text, digests, model identity, finish reason, attempts, and usage; they never store prompts, system messages, API keys, or headers.
+- Replay validates purpose, template version, prompt digest, response digest, and optional expected model identity. Failures are enumerated; there is no fallback to fake or to another recording.
+- A real or replayed run reports `model_kind=real`; replay also reports `replayed=true`. It is excluded from deterministic baseline comparisons.
+- Real clients use a single provider adapter behind a `ProviderTransport` protocol. Credentials are read from an environment variable at call time and never logged or stored. HTTPS and certificate verification stay enabled.
+- Retries: at most 3 attempts with 1s/2s/4s backoff, only for timeouts, HTTP 429, and HTTP 5xx. Auth and invalid-response failures are not retried. Model failures are fatal and never become empty proposals.
+- Per-run budgets default to 200 calls and 500,000 total tokens, configurable. Exceeding either raises `LLM_BUDGET_EXCEEDED`.
+- CLI: `--llm {fake,replay,real}`, `--transcript`, `--record-to`, `--model-id`, `--max-calls`, `--max-tokens` on all three commands. Model/transport/budget failures exit with `EXIT_MODEL=4`.
+- Real-model evaluations are manual and write to a model-labeled output; they never overwrite the fake baseline. A small vendored transcript may be used for offline integration tests.
+
 ## Environment note
 
 Development happens on Windows (Git Bash). `resource` is POSIX-only. POSIX enforces `RLIMIT_AS`/`RLIMIT_CPU`; Windows enforces the subprocess timeout and uses `psutil` (optional extra `sandbox`) for best-effort memory/CPU limits. Do not introduce ctypes Job Object code. The deterministic evaluation baseline is Linux; every report states the platform and whether limits were `enforced` or `best-effort`.
@@ -247,6 +262,8 @@ CI (`.github/workflows/ci.yml`) runs the suite and `python -m evaluation` on Ubu
 - Run container tests: `TESTLENS_CONTAINER_IMAGE=testlens-sandbox:1 python -m pytest -m container`
 - Run the container evaluation baseline: `python -m evaluation --sandbox-backend container --sandbox-image testlens-sandbox:1`
 - Run CLI/storage tests: `python -m pytest tests/test_cli.py`, `python -m pytest tests/test_storage.py`
+- Run model-layer tests: `python -m pytest tests/test_llm_replay.py tests/test_llm_real.py tests/test_llm_budget.py tests/test_llm_options.py`
+- Replay the vendored transcript offline: `python -m cli audit tests/fixtures/audit_project/r001 --llm replay --transcript tests/fixtures/llm/replay_transcript.json`
 - Run the CLI without installing: `python -m cli --help`; after install: `testlens tests|audit|eval ...`
 - Run one test: `python -m pytest tests/test_runner.py::test_runner_strong_passes_and_covers_target`
 

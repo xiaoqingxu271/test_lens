@@ -111,6 +111,11 @@ class EvaluationTrace(BaseModel):
     fixtures: list[str] = Field(default_factory=list)
     model_kind: ModelKind = ModelKind.FAKE
     model_id: str = ""
+    replayed: bool = False
+    llm_calls: int = 0
+    llm_retries: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
     prompt_template_version: str = ""
     seed: int = 0
     threshold: float = 0.5

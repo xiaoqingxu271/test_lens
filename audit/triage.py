@@ -19,7 +19,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from llm.base import LLMClient
-from llm.models import LLMPurpose, LLMRequest, LLMResponse
+from llm.models import (
+    LLMPurpose,
+    LLMRequest,
+    LLMResponse,
+    collect_stats,
+    stats_delta,
+)
 from sandbox.runner import ProjectProfile
 
 from .models import (
@@ -232,6 +238,7 @@ def llm_triage(
     """Complete trigger paths for rule candidates; never move a line."""
     started_at = datetime.now(timezone.utc).isoformat()
     started = time.perf_counter()
+    stats_before = collect_stats(llm)
 
     drafts: list[TriageDraft] = []
     rejected: list[RejectedTriage] = []
@@ -311,12 +318,18 @@ def llm_triage(
         )
     )
 
+    stats = stats_delta(stats_before, collect_stats(llm))
     trace = TriageTrace(
         started_at=started_at,
         elapsed_ms=int((time.perf_counter() - started) * 1000),
         llm_model_kind=llm.model_kind,
         llm_model_id=llm.model_id,
         prompt_template_version=TRIAGE_TEMPLATE_VERSION,
+        llm_calls=stats.calls,
+        llm_retries=stats.retries,
+        prompt_tokens=stats.prompt_tokens,
+        completion_tokens=stats.completion_tokens,
+        replayed=stats.replayed,
         candidates_considered=len(report.candidates),
         drafts_accepted=len(drafts),
         drafts_rejected=len(rejected),

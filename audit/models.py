@@ -108,6 +108,11 @@ class TriageTrace(BaseModel):
     llm_model_kind: ModelKind
     llm_model_id: str
     prompt_template_version: str
+    llm_calls: int = 0
+    llm_retries: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    replayed: bool = False
     candidates_considered: int = 0
     drafts_accepted: int = 0
     drafts_rejected: int = 0

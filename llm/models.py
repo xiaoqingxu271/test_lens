@@ -32,12 +32,21 @@ class FinishReason(str, Enum):
     LENGTH = "length"
     REFUSAL = "refusal"
     EMPTY = "empty"
+    UNKNOWN = "unknown"
 
 
 class LLMUsage(BaseModel):
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     total_tokens: int | None = None
+
+
+class LLMCallStats(BaseModel):
+    calls: int = 0
+    retries: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    replayed: bool = False
 
 
 class LLMRequest(BaseModel):
@@ -73,8 +82,36 @@ class LLMResponse(BaseModel):
     model_kind: ModelKind
     finish_reason: FinishReason = FinishReason.STOP
     usage: LLMUsage = Field(default_factory=LLMUsage)
+    attempts: int = 1
+    replayed: bool = False
 
     @computed_field
     @property
     def response_digest(self) -> str:
         return digest_text(self.text)
+
+
+def collect_stats(client: object) -> LLMCallStats:
+    """Snapshot a client's cumulative call stats.
+
+    Clients shared across stages (replay and real runs) keep cumulative
+    counters, so a stage must diff two snapshots to report its own usage.
+    """
+
+    stats = getattr(client, "stats", None)
+    if isinstance(stats, LLMCallStats):
+        return stats.model_copy(deep=True)
+    return LLMCallStats()
+
+
+def stats_delta(before: LLMCallStats, after: LLMCallStats) -> LLMCallStats:
+    """Per-stage usage from two cumulative snapshots."""
+    return LLMCallStats(
+        calls=max(after.calls - before.calls, 0),
+        retries=max(after.retries - before.retries, 0),
+        prompt_tokens=max(after.prompt_tokens - before.prompt_tokens, 0),
+        completion_tokens=max(
+            after.completion_tokens - before.completion_tokens, 0
+        ),
+        replayed=after.replayed,
+    )

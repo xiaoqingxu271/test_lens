@@ -11,6 +11,22 @@
 - `sandbox/container.py`, `sandbox/Dockerfile`, and container tests in
   `tests/test_container.py` / `tests/test_container_config.py`.
 - `docs/v2-spec.md` accepted 2A container specification.
+- Real-model and replay layer (2B): `--llm {fake,replay,real}`,
+  `--transcript`, `--record-to`, `--model-id`, `--max-calls`, and
+  `--max-tokens` on `tests`, `audit`, and `eval`.
+- `llm/replay.py` versioned transcript loader and deterministic `ReplayLLM`;
+  `llm/recording.py` atomic transcript writer; `llm/real.py` the single
+  OpenAI-compatible adapter behind `ProviderTransport`; `llm/budget.py`
+  per-run call/token budgets; `llm/errors.py` enumerated failures.
+- Replay validates purpose, template version, prompt and response digests, and
+  an optional expected model id; failures never fall back to the fake.
+- Real-model retries: 3 attempts, 1s/2s/4s backoff, only timeouts, HTTP 429,
+  and HTTP 5xx. `EXIT_MODEL=4` for model, transport, and budget failures.
+- `GenerationTrace` and `TriageTrace` record `llm_calls`, `llm_retries`,
+  `prompt_tokens`, `completion_tokens`, and `replayed`; `EvaluationTrace`
+  aggregates them across fixtures.
+- Offline replay tests and a vendored transcript fixture under
+  `tests/fixtures/llm/`; `docs/v2-spec-2b.md` accepted 2B specification.
 
 ## 1.0.0 — 2026-11-16
 

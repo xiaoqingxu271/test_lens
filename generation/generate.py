@@ -20,7 +20,14 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from llm.base import LLMClient
-from llm.models import LLMPurpose, LLMRequest, LLMResponse, ModelKind
+from llm.models import (
+    LLMPurpose,
+    LLMRequest,
+    LLMResponse,
+    ModelKind,
+    collect_stats,
+    stats_delta,
+)
 from sandbox.health import SandboxHealth, check_sandbox_ready
 from sandbox.runner import ProjectProfile, SandboxConfig
 from targets.models import SelectedTarget, TargetSelectionReport
@@ -365,6 +372,7 @@ def generate_tests(
     """Propose, validate, and enumerate candidate tests for selected targets."""
     started_at = datetime.now(timezone.utc).isoformat()
     started = time.perf_counter()
+    stats_before = collect_stats(llm)
 
     if sandbox_health is None:
         sandbox_health = check_sandbox_ready(
@@ -512,12 +520,18 @@ def generate_tests(
         )
     )
 
+    stats = stats_delta(stats_before, collect_stats(llm))
     trace = GenerationTrace(
         started_at=started_at,
         elapsed_ms=int((time.perf_counter() - started) * 1000),
         llm_model_kind=llm.model_kind,
         llm_model_id=llm.model_id,
         prompt_template_version=GENERATION_TEMPLATE_VERSION,
+        llm_calls=stats.calls,
+        llm_retries=stats.retries,
+        prompt_tokens=stats.prompt_tokens,
+        completion_tokens=stats.completion_tokens,
+        replayed=stats.replayed,
         targets_considered=len(selection.targets),
         tests_proposed=tests_proposed,
         tests_accepted=len(candidates),
