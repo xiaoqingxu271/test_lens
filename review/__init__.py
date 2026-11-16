@@ -1,5 +1,9 @@
 from .base import ClaimReviewer
-from .cross_check import cross_check, subjects_from_drafts
+from .cross_check import (
+    cross_check,
+    subjects_from_candidates,
+    subjects_from_drafts,
+)
 from .fake import REVIEWER_ID, DeterministicReviewer
 from .models import (
     CallerRef,
@@ -45,5 +49,6 @@ __all__ = [
     "ReviewerVerdict",
     "RuleReviewer",
     "cross_check",
+    "subjects_from_candidates",
     "subjects_from_drafts",
 ]

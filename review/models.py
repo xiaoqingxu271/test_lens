@@ -6,7 +6,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
-from audit.models import FindingSource, RuleId
+from audit.models import FindingSource, RetractReason, RuleId
 
 
 class ReviewVerdict(str, Enum):
@@ -34,13 +34,6 @@ class ReviewerKind(str, Enum):
     RULE = "rule"
     MODEL = "model"
     FAKE = "fake"
-
-
-class RetractReason(str, Enum):
-    REFUTED_BY_CONTEXT = "REFUTED_BY_CONTEXT"
-    NO_LINE_LOCATION = "NO_LINE_LOCATION"
-    UNVERIFIABLE_CLAIM = "UNVERIFIABLE_CLAIM"
-    DUPLICATE = "DUPLICATE"
 
 
 class EvidenceLine(BaseModel):

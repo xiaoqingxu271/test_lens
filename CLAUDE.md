@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-TestLens is an early v1 repo. The validation infrastructure (sandbox runner, double-run flaky detection, mutation operators and scoring), deterministic target selection, deterministic rule scan (R001–R005), the LLM interface with a deterministic fake, sandbox-gated candidate test generation, line-anchored audit triage, and the false-positive cross-check are implemented; audit reproduction/grading, the evaluation harness, CLI, README, and SQLite metadata are not. This file is the single source of truth for the v1 spec; the confirmed design decisions at the end are normative. Continue in Build order; do not add a real model client or an evaluation run before triage and review exist.
+TestLens is an early v1 repo. The validation infrastructure (sandbox runner, double-run flaky detection, mutation operators and scoring), deterministic target selection, deterministic rule scan (R001–R005), the LLM interface with a deterministic fake, sandbox-gated candidate test generation, line-anchored audit triage, the false-positive cross-check, sandbox reproduction, and evidence grading/`AuditReport` emission are implemented; the test-side pipeline closure, evaluation harness, CLI, README, and SQLite metadata are not. This file is the single source of truth for the v1 spec; the confirmed design decisions at the end are normative. Continue in Build order; do not add a real model client or an evaluation run before triage and review exist.
 
 Goal: for small Python web projects (FastAPI/Flask style with clear routes and function boundaries), an LLM only proposes candidates. Sandboxed execution, mutation scoring, and an independent false-positive review decide what survives; attribution explains every rejection.
 
@@ -24,7 +24,7 @@ Goal: for small Python web projects (FastAPI/Flask style with clear routes and f
 - `mutation/` — fixed AST operator set and mutation scoring.
 - `project/` — deterministic Python file discovery, parsing, and enumerated skip reasons.
 - `targets/` — AST route extraction and target-selection reports.
-- `audit/` — rule scan, R001–R005 handlers, and LLM triage; `RuleCandidate` and `TriageDraft` are intermediate stage outputs, not final `Finding`s.
+- `audit/` — rule scan, R001–R005 handlers, LLM triage, sandbox reproduction, and evidence grading; `RuleCandidate` and `TriageDraft` are intermediate stage outputs, not final `Finding`s.
 - `llm/` — provider-neutral request/response contracts, the `LLMClient` protocol, and the deterministic fake.
 - `generation/` — prompt construction, deterministic proposal validation, and `generate_tests`; emits candidates only and never executes or writes the target project.
 - `review/` — false-positive cross-check: deterministic rule reviewer, independent reviewer interface and fake, context assembly, and evidence-anchor validation.
@@ -138,6 +138,30 @@ Rule IDs are used in reports and evaluation grouping. Adding a rule requires upd
 - `CrossCheckResult` follows decision 3. `CrossCheckTrace` records subjects considered, verdict counts, rule checks, model reviews, reviewer ids, elapsed time, and warnings.
 - Cross-check is not the final output: sandbox reproduction and evidence grading remain later stages.
 
+### Sandbox reproduction (v1)
+
+`audit/repro.py::run_repro(profile, rule_report, cross_check_report, ...)` attempts reproduction only for claims whose cross-check verdict is `pass` and whose rule has an enumerated template. v1 registers R001 only.
+
+- R001 template: locate the containing module-level function; skip async functions and functions with required parameters (`UNSUPPORTED_SIGNATURE`); derive a probe from the mutable default AST (list/dict/set/bytearray literals and comprehensions, builtins constructors, tuples containing a mutable element); generate a minimal pytest test that mutates the first call's default-backed object and asserts the mutation is visible on a second call.
+- The script is written to an isolated artifact directory, never the project; it runs through the normal double-run executor with the project root as cwd.
+- Outcome mapping: `passed` → reproduced; assertion failure → `CLAIM_NOT_OBSERVED`; timeout → `TIMEOUT`; pass/fail disagreement → `FLAKY`; import/collection/runner failure → `SANDBOX_ERROR`.
+- Skip reasons: `NOT_PASSED`, `UNSUPPORTED_RULE`, `UNSUPPORTED_SIGNATURE`, `TEMPLATE_BUILD_FAILED`. Rules without a template can never exceed `STATIC_CONFIRMED`.
+- `ReproArtifact` records script source/path, exit code, timeout, elapsed time, stdout/stderr digests, platform, enforcement mode, the double-run flag, `reproduced`, and failure reason.
+
+### Evidence grading and audit report (v1)
+
+`audit/grade.py::grade_and_emit(rule_report, triage_report, cross_check_report, repro_report)` recomputes evidence levels from final evidence and emits `AuditReport`.
+
+- `refute` → `Retracted` with the result's `RetractReason` (default `REFUTED_BY_CONTEXT`).
+- `unverifiable` → `Retracted` (default `UNVERIFIABLE_CLAIM`).
+- `pass` plus a `reproduced=true` artifact → `REPRODUCED`.
+- `pass` plus rule confirmation or reviewer `evidence_lines` → `STATIC_CONFIRMED`.
+- `pass` without either → `SUSPICIOUS`, folded into `folded_suspicious` by default.
+- A failed repro never lowers static evidence below `STATIC_CONFIRMED`; only a valid sandbox repro can upgrade to `REPRODUCED`.
+- Exactly one cross-check result is required per rule candidate; missing, duplicate, or unexpected results/artifacts raise.
+- `Finding` carries file, line span, rule id, `llm_finding_id` (only when triage completed the trigger path), source, title, evidence level, claim, trigger path, and an optional repro artifact. `GradingTrace` records counts and evidence/retract distributions.
+- `subjects_from_candidates` ensures triage-rejected candidates are still cross-checked and graded as `RULE` findings.
+
 ## Evaluation baseline
 
 - Two vendored minimal fixture projects (one FastAPI, one Flask), with pinned dependencies, offline execution, known defects, and known false positives. Real OSS projects are optional, pinned by commit, and are not the deterministic baseline.
@@ -176,6 +200,7 @@ Development happens on Windows (Git Bash). `resource` is POSIX-only. POSIX enfor
 - Run target selection or rule scan: `python -m pytest tests/test_target_selection.py`, `python -m pytest tests/test_rule_scan.py`
 - Run generation: `python -m pytest tests/test_generation.py`; sandbox gate: `python -m pytest tests/test_sandbox_health.py`
 - Run audit triage: `python -m pytest tests/test_triage.py`; cross-check: `python -m pytest tests/test_cross_check.py`
+- Run reproduction/grading: `python -m pytest tests/test_repro.py`, `python -m pytest tests/test_grade.py`
 - Run one test: `python -m pytest tests/test_runner.py::test_runner_strong_passes_and_covers_target`
 
 Tests invoke pytest inside a sandbox subprocess against `tests/fixtures/sample_project`; the fixture tests are excluded from the outer collection. The README is still pending and must state that production isolation uses containers even though v1 uses `subprocess` + resource limits.

@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from llm.models import ModelKind
 from project.files import SkippedFile
+from sandbox.runner import EnforcementMode
 
 
 class RuleId(str, Enum):
@@ -118,3 +119,118 @@ class TriageReport(BaseModel):
     drafts: list[TriageDraft] = Field(default_factory=list)
     rejected: list[RejectedTriage] = Field(default_factory=list)
     trace: TriageTrace
+
+
+class ReproFailureReason(str, Enum):
+    CLAIM_NOT_OBSERVED = "claim_not_observed"
+    SANDBOX_ERROR = "sandbox_error"
+    TIMEOUT = "timeout"
+    FLAKY = "flaky"
+
+
+class ReproSkipReason(str, Enum):
+    NOT_PASSED = "not_passed"
+    UNSUPPORTED_RULE = "unsupported_rule"
+    UNSUPPORTED_SIGNATURE = "unsupported_signature"
+    TEMPLATE_BUILD_FAILED = "template_build_failed"
+
+
+class ReproArtifact(BaseModel):
+    finding_id: str
+    rule_id: RuleId
+    file: str
+    line_start: int
+    line_end: int
+    script_source: str
+    script_path: str
+    exit_code: int
+    timed_out: bool
+    elapsed_ms: int
+    stdout_digest: str | None = None
+    stderr_digest: str | None = None
+    platform: str
+    enforcement_mode: EnforcementMode
+    double_run: bool
+    reproduced: bool
+    failure_reason: ReproFailureReason | None = None
+
+
+class ReproSkipped(BaseModel):
+    finding_id: str
+    rule_id: RuleId
+    file: str
+    line_start: int
+    line_end: int
+    reason: ReproSkipReason
+    detail: str | None = None
+
+
+class ReproTrace(BaseModel):
+    started_at: str
+    elapsed_ms: int
+    findings_considered: int = 0
+    attempted: int = 0
+    reproduced: int = 0
+    skipped_by_reason: dict[ReproSkipReason, int] = Field(default_factory=dict)
+    failures_by_reason: dict[ReproFailureReason, int] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ReproReport(BaseModel):
+    artifacts: list[ReproArtifact] = Field(default_factory=list)
+    skipped: list[ReproSkipped] = Field(default_factory=list)
+    trace: ReproTrace
+
+
+class RetractReason(str, Enum):
+    REFUTED_BY_CONTEXT = "REFUTED_BY_CONTEXT"
+    NO_LINE_LOCATION = "NO_LINE_LOCATION"
+    UNVERIFIABLE_CLAIM = "UNVERIFIABLE_CLAIM"
+    DUPLICATE = "DUPLICATE"
+
+
+class EvidenceLevel(str, Enum):
+    REPRODUCED = "REPRODUCED"
+    STATIC_CONFIRMED = "STATIC_CONFIRMED"
+    SUSPICIOUS = "SUSPICIOUS"
+
+
+class Finding(BaseModel):
+    finding_id: str
+    file: str
+    line_start: int
+    line_end: int
+    rule_id: RuleId | None = None
+    llm_finding_id: str | None = None
+    source: FindingSource
+    title: str
+    evidence_level: EvidenceLevel
+    claim: str | None = None
+    trigger_path: list[str] = Field(default_factory=list)
+    repro_artifact: ReproArtifact | None = None
+
+
+class Retracted(BaseModel):
+    finding: Finding
+    reason: RetractReason
+
+
+class GradingTrace(BaseModel):
+    started_at: str
+    elapsed_ms: int
+    candidates_considered: int = 0
+    findings_emitted: int = 0
+    folded_suspicious: int = 0
+    retracted: int = 0
+    evidence_level_counts: dict[EvidenceLevel, int] = Field(default_factory=dict)
+    retract_reason_counts: dict[RetractReason, int] = Field(default_factory=dict)
+    repro_attempted: int = 0
+    repro_reproduced: int = 0
+    warnings: list[str] = Field(default_factory=list)
+
+
+class AuditReport(BaseModel):
+    findings: list[Finding] = Field(default_factory=list)
+    folded_suspicious: list[Finding] = Field(default_factory=list)
+    retracted: list[Retracted] = Field(default_factory=list)
+    trace: GradingTrace

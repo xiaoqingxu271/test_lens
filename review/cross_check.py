@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from audit.models import RuleScanReport, TriageDraft
+from audit.models import RuleScanReport, TriageDraft, TriageReport
 from sandbox.runner import ProjectProfile
 
 from .base import ClaimReviewer
@@ -56,6 +56,46 @@ def subjects_from_drafts(drafts: Sequence[TriageDraft]) -> list[CrossCheckSubjec
         )
         for draft in drafts
     ]
+
+
+def subjects_from_candidates(
+    rule_report: RuleScanReport, triage_report: TriageReport
+) -> list[CrossCheckSubject]:
+    """Build one subject per rule candidate, including untriaged candidates.
+
+    Grading requires exactly one cross-check result per candidate; candidates
+    whose triage was rejected still get reviewed as plain rule findings.
+    """
+    drafts = {draft.finding_id: draft for draft in triage_report.drafts}
+    subjects: list[CrossCheckSubject] = []
+    for candidate in rule_report.candidates:
+        draft = drafts.get(candidate.finding_id)
+        if draft is None:
+            subjects.append(
+                CrossCheckSubject(
+                    finding_id=candidate.finding_id,
+                    rule_id=candidate.rule_id,
+                    source=candidate.source,
+                    file=candidate.relative_file,
+                    line_start=candidate.line_start,
+                    line_end=candidate.line_end,
+                    claim=candidate.message,
+                )
+            )
+        else:
+            subjects.append(
+                CrossCheckSubject(
+                    finding_id=draft.finding_id,
+                    rule_id=draft.rule_id,
+                    source=draft.source,
+                    file=draft.file,
+                    line_start=draft.line_start,
+                    line_end=draft.line_end,
+                    claim=draft.claim,
+                    trigger_path=list(draft.trigger_path),
+                )
+            )
+    return subjects
 
 
 def _unverifiable(reason: RetractReason) -> ReviewerVerdict:
