@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "testlens"
-version = "0.1.0"
+version = "1.0.0"
 description = "Sandbox execution and mutation validation for interface test generation and code audit"
 requires-python = ">=3.10"
 dependencies = ["pydantic>=2.0"]
