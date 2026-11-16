@@ -14,7 +14,10 @@ sandbox = ["psutil>=5.9"]
 dev = ["pytest>=8.0", "psutil>=5.9"]
 
 [tool.setuptools]
-packages = ["sandbox", "mutation", "project", "targets", "audit", "llm", "generation", "review", "pipeline", "evaluation"]
+packages = ["sandbox", "mutation", "project", "targets", "audit", "llm", "generation", "review", "pipeline", "evaluation", "storage", "cli"]
+
+[project.scripts]
+testlens = "cli.main:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

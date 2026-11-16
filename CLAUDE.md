@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-TestLens is an early v1 repo. The validation infrastructure (sandbox runner, double-run flaky detection, mutation operators and scoring), deterministic target selection, deterministic rule scan (R001–R005), the LLM interface with a deterministic fake, sandbox-gated candidate test generation, line-anchored audit triage, the false-positive cross-check, sandbox reproduction, evidence grading/`AuditReport` emission, the test-side pipeline closure, and the evaluation harness on vendored fixtures are implemented; the CLI, README, and SQLite metadata are not. This file is the single source of truth for the v1 spec; the confirmed design decisions at the end are normative. Continue in Build order; do not add a real model client or an evaluation run before triage and review exist.
+TestLens has reached v1 scope. The validation infrastructure (sandbox runner, double-run flaky detection, mutation operators and scoring), deterministic target selection, deterministic rule scan (R001–R005), the LLM interface with a deterministic fake, sandbox-gated candidate test generation, line-anchored audit triage, the false-positive cross-check, sandbox reproduction, evidence grading/`AuditReport` emission, the test-side pipeline closure, the evaluation harness on vendored fixtures, the CLI, README, and SQLite metadata are implemented. This file is the single source of truth for the v1 spec; the confirmed design decisions at the end are normative. Continue in Build order; do not add a real model client or an evaluation run before triage and review exist.
 
 Goal: for small Python web projects (FastAPI/Flask style with clear routes and function boundaries), an LLM only proposes candidates. Sandboxed execution, mutation scoring, and an independent false-positive review decide what survives; attribution explains every rejection.
 
@@ -30,6 +30,8 @@ Goal: for small Python web projects (FastAPI/Flask style with clear routes and f
 - `review/` — false-positive cross-check: deterministic rule reviewer, independent reviewer interface and fake, context assembly, and evidence-anchor validation.
 - `pipeline/` — test-side closure: isolated materialization, per-candidate double-run execution, target-local mutation scoring, enumerated discard attribution, and `TestReport`; never writes the target project.
 - `evaluation/` — evaluation harness and metrics over the vendored fixtures; `eval/fixtures/` holds the self-contained FastAPI/Flask projects, labels, and fixed fake proposals; `eval/reports/` is generated output (gitignored).
+- `cli/` — `testlens` entry point: `tests`, `audit`, and `eval` subcommands; it never adds a model client.
+- `storage/` — SQLite projection of test, audit, and evaluation reports with normalized tables plus the full JSON payload.
 
 ## Build order (non-negotiable)
 
@@ -184,6 +186,12 @@ Rule IDs are used in reports and evaluation grouping. Adding a rule requires upd
 - Evaluation reports include kept count, `DiscardReason` distribution, mean kill rate with the assertion/exception/timeout breakdown, flaky rate, platform, enforcement mode, and the equivalent-mutant caveat; the audit side reports precision, per-rule hits/misses, evidence-level and retract-reason distributions.
 - Calibrated mutation-kill threshold: `0.5`. Calibration ran `0.2 / 0.5 / 0.8` over both fixtures. Strong proposals measured kill rate `1.0`; weak proposals `0.0`; partial proposals `0.25` (FastAPI) and `0.33` (Flask). At `0.2` the partial tests are kept; at `0.5` and `0.8` only the strong test survives, so `0.5` separates weak from strong with margin on both fixtures. The evidence is in `calibration.json` and `summary.md` of each run.
 
+### CLI and SQLite metadata (v1)
+
+`cli/main.py` exposes `tests`, `audit`, and `eval`. The console script is `testlens`; `python -m cli` works without installation. The CLI only calls existing stage functions and uses the deterministic fake; `--proposals FILE` seeds fake responses, `--json` prints the report, `--output DIR` writes a timestamped JSON report, and `--db PATH` persists metadata. It never adds a real model client.
+
+`storage/db.py` initializes a versioned SQLite schema (`schema_meta`). `runs` stores header metadata, summary counts, and the complete JSON payload; `kept_tests`, `discarded_tests`, `findings`, `retracted`, and `evaluation_fixtures` provide queryable projections. Enums are stored by their stable values. Stage reports remain Pydantic objects at the boundary.
+
 ## Code conventions
 
 - Enums everywhere; no bare strings for reasons, evidence levels, statuses.
@@ -219,9 +227,11 @@ Development happens on Windows (Git Bash). `resource` is POSIX-only. POSIX enfor
 - Run test pipeline: `python -m pytest tests/test_pipeline.py`
 - Run evaluation tests: `python -m pytest tests/test_evaluation.py`
 - Run the evaluation baseline: `python -m evaluation` (writes under `eval/reports/`); `python -m evaluation --no-write` prints metrics only
+- Run CLI/storage tests: `python -m pytest tests/test_cli.py`, `python -m pytest tests/test_storage.py`
+- Run the CLI without installing: `python -m cli --help`; after install: `testlens tests|audit|eval ...`
 - Run one test: `python -m pytest tests/test_runner.py::test_runner_strong_passes_and_covers_target`
 
-Tests invoke pytest inside a sandbox subprocess against `tests/fixtures/sample_project` and `tests/fixtures/pipeline_project`; fixture tests are excluded from the outer collection. The README is still pending and must state that production isolation uses containers even though v1 uses `subprocess` + resource limits.
+Tests invoke pytest inside a sandbox subprocess against `tests/fixtures/sample_project` and `tests/fixtures/pipeline_project`; fixture tests are excluded from the outer collection. The README states that production isolation requires containers even though v1 uses `subprocess` + resource limits.
 
 ## Confirmed design decisions (v1)
 

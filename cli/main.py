@@ -1,0 +1,265 @@
+"""TestLens CLI.
+
+The CLI is an entry point, not a new pipeline. It calls the same stage
+functions as the library and never adds a model client: proposals come from
+the deterministic fake, optionally seeded by a fixed JSON response file.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sqlite3
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+from audit.grade import grade_and_emit
+from audit.repro import run_repro
+from audit.rule_scan import scan_rules
+from audit.triage import llm_triage
+from evaluation.labels import FixtureError, load_proposals_file
+from evaluation.run import run_evaluation
+from generation.generate import SandboxUnavailableError, generate_tests
+from llm.fake import DeterministicFakeLLM
+from pipeline.run import run_test_pipeline
+from review.cross_check import cross_check, subjects_from_candidates
+from review.fake import DeterministicReviewer
+from sandbox import runner
+from sandbox.runner import ProjectProfile, SandboxConfig
+from storage.db import (
+    open_database,
+    save_audit_report,
+    save_evaluation_report,
+    save_test_report,
+)
+from targets.selection import select_targets
+
+EXIT_OK = 0
+EXIT_USAGE = 2
+EXIT_SANDBOX = 3
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="testlens",
+        description=(
+            "LLM-proposed tests and audit findings, decided by a sandbox, "
+            "mutation scoring, and an independent cross-check."
+        ),
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    tests = sub.add_parser("tests", help="generate, execute, and score tests")
+    tests.add_argument("project", help="target project directory")
+    tests.add_argument("--threshold", type=float, default=0.5)
+    tests.add_argument("--seed", type=int, default=0)
+    tests.add_argument(
+        "--proposals",
+        default=None,
+        help="JSON file mapping deterministic request ids to fake responses",
+    )
+    tests.add_argument("--output", default=None, help="report output root")
+    tests.add_argument("--db", default=None, help="SQLite metadata path")
+    tests.add_argument("--json", action="store_true", dest="as_json")
+
+    audit = sub.add_parser("audit", help="scan rules and grade findings")
+    audit.add_argument("project", help="target project directory")
+    audit.add_argument("--output", default=None, help="report output root")
+    audit.add_argument("--db", default=None, help="SQLite metadata path")
+    audit.add_argument("--json", action="store_true", dest="as_json")
+
+    evaluate = sub.add_parser("eval", help="run the fixture evaluation baseline")
+    evaluate.add_argument("--output", default=None, help="report output root")
+    evaluate.add_argument("--threshold", type=float, default=0.5)
+    evaluate.add_argument("--seed", type=int, default=0)
+    evaluate.add_argument("--db", default=None, help="SQLite metadata path")
+    evaluate.add_argument("--json", action="store_true", dest="as_json")
+
+    return parser
+
+
+def _project(raw: str) -> Path:
+    root = Path(raw).expanduser().resolve()
+    if not root.is_dir():
+        raise ValueError(f"project directory does not exist: {root}")
+    return root
+
+
+def _profile(root: Path) -> ProjectProfile:
+    return ProjectProfile(
+        profile_id=root.name,
+        root=root,
+        test_paths=[],
+        target_symbols=[],
+    )
+
+
+def _write_report(report, output_root: str, kind: str) -> Path:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    directory = Path(output_root).expanduser().resolve() / stamp
+    directory.mkdir(parents=True, exist_ok=False)
+    path = directory / f"{kind}_report.json"
+    path.write_text(
+        report.model_dump_json(indent=2) + "\n", encoding="utf-8"
+    )
+    return path
+
+
+def _emit(report, args, kind: str, summary) -> None:
+    if args.output:
+        path = _write_report(report, args.output, kind)
+        print(f"report: {path}", file=sys.stderr)
+    if args.as_json:
+        print(report.model_dump_json(indent=2))
+    else:
+        summary()
+
+
+def _tests(args) -> int:
+    root = _project(args.project)
+    profile = _profile(root)
+    selection = select_targets(profile)
+    responses = (
+        load_proposals_file(Path(args.proposals).expanduser().resolve())
+        if args.proposals
+        else None
+    )
+    llm = DeterministicFakeLLM(responses)
+    generation = generate_tests(profile, selection, llm)
+    report = run_test_pipeline(
+        profile,
+        selection,
+        generation,
+        kill_threshold=args.threshold,
+        seed=args.seed,
+    )
+
+    if args.db:
+        with open_database(args.db) as conn:
+            save_test_report(
+                conn,
+                root.name,
+                report,
+                model_kind=llm.model_kind.value,
+                model_id=llm.model_id,
+            )
+
+    def summary() -> None:
+        print(
+            f"kept={len(report.kept)} "
+            f"flaky={len(report.flaky)} "
+            f"discarded={dict(report.trace.discarded_by_reason)}"
+        )
+        print(f"threshold={report.trace.kill_threshold} seed={report.trace.seed}")
+
+    _emit(report, args, "test", summary)
+    return EXIT_OK
+
+
+def _audit(args) -> int:
+    root = _project(args.project)
+    profile = _profile(root)
+    scan = scan_rules(profile)
+    triage = llm_triage(profile, scan, DeterministicFakeLLM())
+    review = cross_check(
+        profile,
+        scan,
+        subjects_from_candidates(scan, triage),
+        DeterministicReviewer(),
+    )
+    config = runner.resolve_config(SandboxConfig(double_run=True))
+    with tempfile.TemporaryDirectory(prefix="testlens_cli_repro_") as temporary:
+        repro = run_repro(
+            profile,
+            scan,
+            review,
+            sandbox_config=config,
+            artifact_root=Path(temporary),
+        )
+    report = grade_and_emit(scan, triage, review, repro)
+
+    if args.db:
+        with open_database(args.db) as conn:
+            save_audit_report(
+                conn,
+                root.name,
+                report,
+                platform=config.platform,
+                enforcement_mode=config.enforcement_mode.value,
+                double_run=config.double_run,
+                model_kind="fake",
+                model_id=DeterministicFakeLLM().model_id,
+            )
+
+    def summary() -> None:
+        print(
+            f"findings={len(report.findings)} "
+            f"retracted={len(report.retracted)} "
+            f"folded_suspicious={len(report.folded_suspicious)}"
+        )
+        print(
+            "evidence="
+            + json.dumps(
+                {
+                    level.value: count
+                    for level, count in report.trace.evidence_level_counts.items()
+                },
+                sort_keys=True,
+            )
+        )
+
+    _emit(report, args, "audit", summary)
+    return EXIT_OK
+
+
+def _evaluation(args) -> int:
+    report = run_evaluation(
+        output_root=args.output,
+        threshold=args.threshold,
+        seed=args.seed,
+        write=True,
+    )
+    if args.db:
+        with open_database(args.db) as conn:
+            save_evaluation_report(conn, report)
+
+    def summary() -> None:
+        if report.output_dir:
+            print(f"report: {report.output_dir}")
+        for fixture in report.fixtures:
+            print(
+                f"{fixture.project}: kept={fixture.test.kept} "
+                f"discarded={fixture.test.discarded_by_reason} "
+                f"findings={fixture.audit.findings_emitted} "
+                f"precision={fixture.audit.precision}"
+            )
+
+    if args.as_json:
+        print(report.model_dump_json(indent=2))
+    else:
+        summary()
+    return EXIT_OK
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    handler = {
+        "tests": _tests,
+        "audit": _audit,
+        "eval": _evaluation,
+    }[args.command]
+    try:
+        return handler(args)
+    except SandboxUnavailableError as exc:
+        print(f"sandbox unavailable: {exc}", file=sys.stderr)
+        return EXIT_SANDBOX
+    except (FixtureError, OSError, sqlite3.Error, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

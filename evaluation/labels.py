@@ -83,20 +83,24 @@ def load_labels(root: Path) -> EvaluationLabels:
     )
 
 
-def load_proposals(root: Path) -> dict[str, str]:
-    payload = _read_json(root / "proposals.json")
+def load_proposals_file(path: Path) -> dict[str, str]:
+    payload = _read_json(path)
     if not isinstance(payload, dict):
-        raise FixtureError("proposals.json must be an object")
+        raise FixtureError(f"{path} must contain an object")
     responses: dict[str, str] = {}
     for request_id, value in payload.items():
         if not isinstance(request_id, str) or not isinstance(value, (dict, str)):
             raise FixtureError(
-                "proposals.json must map request ids to objects or strings"
+                f"{path} must map request ids to objects or strings"
             )
         responses[request_id] = (
             value if isinstance(value, str) else json.dumps(value, sort_keys=True)
         )
     return responses
+
+
+def load_proposals(root: Path) -> dict[str, str]:
+    return load_proposals_file(root / "proposals.json")
 
 
 def fixture_roots(root: Path) -> list[Path]:
