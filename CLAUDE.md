@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-TestLens is an early v1 repo. The validation infrastructure (sandbox runner, double-run flaky detection, mutation operators and scoring), deterministic target selection, deterministic rule scan (R001–R005), the LLM interface with a deterministic fake, sandbox-gated candidate test generation, line-anchored audit triage, the false-positive cross-check, sandbox reproduction, and evidence grading/`AuditReport` emission are implemented; the test-side pipeline closure, evaluation harness, CLI, README, and SQLite metadata are not. This file is the single source of truth for the v1 spec; the confirmed design decisions at the end are normative. Continue in Build order; do not add a real model client or an evaluation run before triage and review exist.
+TestLens is an early v1 repo. The validation infrastructure (sandbox runner, double-run flaky detection, mutation operators and scoring), deterministic target selection, deterministic rule scan (R001–R005), the LLM interface with a deterministic fake, sandbox-gated candidate test generation, line-anchored audit triage, the false-positive cross-check, sandbox reproduction, evidence grading/`AuditReport` emission, and the test-side pipeline closure are implemented; the evaluation harness, CLI, README, and SQLite metadata are not. This file is the single source of truth for the v1 spec; the confirmed design decisions at the end are normative. Continue in Build order; do not add a real model client or an evaluation run before triage and review exist.
 
 Goal: for small Python web projects (FastAPI/Flask style with clear routes and function boundaries), an LLM only proposes candidates. Sandboxed execution, mutation scoring, and an independent false-positive review decide what survives; attribution explains every rejection.
 
@@ -28,13 +28,14 @@ Goal: for small Python web projects (FastAPI/Flask style with clear routes and f
 - `llm/` — provider-neutral request/response contracts, the `LLMClient` protocol, and the deterministic fake.
 - `generation/` — prompt construction, deterministic proposal validation, and `generate_tests`; emits candidates only and never executes or writes the target project.
 - `review/` — false-positive cross-check: deterministic rule reviewer, independent reviewer interface and fake, context assembly, and evidence-anchor validation.
+- `pipeline/` — test-side closure: isolated materialization, per-candidate double-run execution, target-local mutation scoring, enumerated discard attribution, and `TestReport`; never writes the target project.
 
 ## Build order (non-negotiable)
 
 1. Sandbox executor (subprocess + timeout + resource limits + isolated workdir) and minimal AST mutator.
 2. Deterministic target selection and rule scan.
 3. LLM generation/triage behind an interface (deterministic fake by default).
-4. Cross-check, sandbox reproduction, grading, evaluation harness.
+4. Cross-check, sandbox reproduction, grading, test pipeline closure, evaluation harness.
 
 No test-generation stage may be entered if the sandbox executor is unavailable or failing its own acceptance tests.
 
@@ -162,6 +163,17 @@ Rule IDs are used in reports and evaluation grouping. Adding a rule requires upd
 - `Finding` carries file, line span, rule id, `llm_finding_id` (only when triage completed the trigger path), source, title, evidence level, claim, trigger path, and an optional repro artifact. `GradingTrace` records counts and evidence/retract distributions.
 - `subjects_from_candidates` ensures triage-rejected candidates are still cross-checked and graded as `RULE` findings.
 
+### Test pipeline closure (v1)
+
+`pipeline/run.py::run_test_pipeline(profile, selection, generation, ...)` closes the test side: materialize → execute (double-run) → mutate and score → attribute discard → `TestReport`.
+
+- Materialization copies the project and every accepted candidate into an isolated work directory; the target project is never written to. A traversal path, an existing file, a duplicate test id, or two candidates sharing one test file raises `PipelineError`.
+- Execution runs one candidate per subprocess; double-run uses two subprocesses per candidate. A report whose test ids do not match the candidate raises.
+- Mutation scoring runs only for candidates that passed both runs and entered the target symbol. Mutants are target-local and use the fixed operator set and seed.
+- Attribution order: `FLAKY` (also in `flaky`), `ENVIRONMENT_MISSING` (import/collection/runner failure, skipped), `RUNTIME_ERROR_ON_HAPPY` (other non-pass), `TARGET_MISMATCH` (target never entered), `ASSERTION_TOO_WEAK` (`mutations_run == 0` or kill rate below the threshold), else kept. Failed tests are never retried.
+- `TestPipelineTrace` records stage counts, the discard distribution, `double_run`, threshold, operator ids, seed, platform, enforcement mode, and warnings. A report with `double_run=false` is marked and excluded from evaluation.
+- The default threshold is `0.5`; calibration belongs to the evaluation harness.
+
 ## Evaluation baseline
 
 - Two vendored minimal fixture projects (one FastAPI, one Flask), with pinned dependencies, offline execution, known defects, and known false positives. Real OSS projects are optional, pinned by commit, and are not the deterministic baseline.
@@ -201,9 +213,10 @@ Development happens on Windows (Git Bash). `resource` is POSIX-only. POSIX enfor
 - Run generation: `python -m pytest tests/test_generation.py`; sandbox gate: `python -m pytest tests/test_sandbox_health.py`
 - Run audit triage: `python -m pytest tests/test_triage.py`; cross-check: `python -m pytest tests/test_cross_check.py`
 - Run reproduction/grading: `python -m pytest tests/test_repro.py`, `python -m pytest tests/test_grade.py`
+- Run test pipeline: `python -m pytest tests/test_pipeline.py`
 - Run one test: `python -m pytest tests/test_runner.py::test_runner_strong_passes_and_covers_target`
 
-Tests invoke pytest inside a sandbox subprocess against `tests/fixtures/sample_project`; the fixture tests are excluded from the outer collection. The README is still pending and must state that production isolation uses containers even though v1 uses `subprocess` + resource limits.
+Tests invoke pytest inside a sandbox subprocess against `tests/fixtures/sample_project` and `tests/fixtures/pipeline_project`; fixture tests are excluded from the outer collection. The README is still pending and must state that production isolation uses containers even though v1 uses `subprocess` + resource limits.
 
 ## Confirmed design decisions (v1)
 

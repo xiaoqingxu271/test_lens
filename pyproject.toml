@@ -14,7 +14,7 @@ sandbox = ["psutil>=5.9"]
 dev = ["pytest>=8.0", "psutil>=5.9"]
 
 [tool.setuptools]
-packages = ["sandbox", "mutation", "project", "targets", "audit", "llm", "generation", "review"]
+packages = ["sandbox", "mutation", "project", "targets", "audit", "llm", "generation", "review", "pipeline"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
