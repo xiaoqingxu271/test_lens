@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from generation.models import GeneratedTest
 from mutation.score import MutationScoreReport
+from sandbox.container import SandboxBackend
 from sandbox.runner import (
     EnforcementMode,
     FailureKind,
@@ -105,6 +106,7 @@ class TestPipelineTrace(BaseModel):
     seed: int = 0
     platform: str = ""
     enforcement_mode: EnforcementMode = EnforcementMode.BEST_EFFORT
+    sandbox_backend: SandboxBackend = SandboxBackend.SUBPROCESS
     warnings: list[str] = Field(default_factory=list)
 
 

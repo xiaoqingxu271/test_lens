@@ -74,6 +74,7 @@ def run_test_pipeline(
                 seed=seed,
                 platform=config.platform,
                 enforcement_mode=config.enforcement_mode,
+                sandbox_backend=config.backend,
                 warnings=sorted(warnings),
             )
         )
@@ -162,6 +163,7 @@ def run_test_pipeline(
             seed=seed,
             platform=config.platform,
             enforcement_mode=config.enforcement_mode,
+            sandbox_backend=config.backend,
             warnings=sorted(warnings),
         )
         return TestReport(

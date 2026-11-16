@@ -206,6 +206,7 @@ def merge_runs(
         double_run=config.double_run,
         cwd=cwd,
         env_digest=env_digest,
+        backend=config.backend,
         warnings=sorted(set(warnings)),
     )
     return ExecutionReport(

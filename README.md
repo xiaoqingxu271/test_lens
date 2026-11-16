@@ -59,6 +59,43 @@ and attribution; they are not a quality signal.
 report under `DIR`. `--db PATH` stores normalized metadata and the full report
 payload in SQLite.
 
+## Container sandbox backend (v2)
+
+`subprocess` remains the default. The opt-in container backend runs each test,
+double-run attempt, mutant, reproduction, and health probe in a fresh Linux
+container with enforced boundaries:
+
+```bash
+docker build -t testlens-sandbox:1 sandbox
+
+testlens tests path/to/project \
+  --sandbox-backend container \
+  --sandbox-image testlens-sandbox:1
+
+python -m evaluation \
+  --sandbox-backend container \
+  --sandbox-image testlens-sandbox:1
+```
+
+The container is run with `--network none`, a read-only root filesystem and
+project mount, dropped capabilities, `no-new-privileges`, PID/memory/CPU
+limits, and a writable artifacts mount. The environment is an allowlist; host
+variables are not inherited. If the runtime or image is unavailable, the run
+fails explicitly and never falls back to `subprocess`.
+
+2A supports Docker on Linux hosts only. Windows/macOS hosts report
+`CONTAINER_UNSUPPORTED_PLATFORM`. The default image contains Python 3.12 and
+pytest; projects with dependencies must supply their own image. Container
+memory and CPU values are enforced but reported as `None` when the runtime
+cannot measure them; no values are estimated. The design is in
+`docs/v2-spec.md`.
+
+Run the container tests with:
+
+```bash
+TESTLENS_CONTAINER_IMAGE=testlens-sandbox:1 python -m pytest -m container
+```
+
 ## Test pipeline
 
 ```
@@ -143,14 +180,16 @@ in each run's `calibration.json`.
 
 ## Safety and isolation
 
-v1 uses `subprocess` with a timeout and an isolated work directory. On POSIX it
-applies `RLIMIT_AS` and `RLIMIT_CPU`; on Windows the timeout is enforced and
-`psutil` provides best-effort memory/CPU limits. Reports state the platform and
-whether enforcement was `enforced` or `best-effort`.
+The default backend uses `subprocess` with a timeout and an isolated work
+directory. On POSIX it applies `RLIMIT_AS` and `RLIMIT_CPU`; on Windows the
+timeout is enforced and `psutil` provides best-effort memory/CPU limits. Reports
+state the backend, platform, and whether enforcement was `enforced` or
+`best-effort`.
 
-**v1 does not claim network or complete filesystem isolation. Production
-isolation requires containers.** The deterministic evaluation baseline is
-Linux; the development environment is Windows/Git Bash.
+The opt-in container backend adds network and filesystem isolation on Linux;
+`subprocess` does not claim either. **Production isolation still requires a
+hardened container runtime and image.** The deterministic evaluation baseline
+is Linux; the development environment is Windows/Git Bash.
 
 CI (`.github/workflows/ci.yml`) runs the suite and the evaluation baseline on
 Ubuntu for Python 3.10 and 3.12, and fails unless the report says
@@ -171,9 +210,12 @@ state `best-effort`.
   nested functions are out of scope.
 - No `pip install` is executed for the target project; dependencies must be
   pre-provisioned.
-- Sandbox subprocesses inherit the parent environment. Do not run untrusted
-  projects with secrets in environment variables; production isolation requires
-  containers.
+- The default `subprocess` backend inherits the parent environment. Do not run
+  untrusted projects with secrets in environment variables; use the container
+  backend or a hardened runtime for production.
+- The container backend is Linux-only in 2A. It enforces limits but cannot
+  report measured peak RSS/CPU without runtime support, so those fields are
+  `None`.
 
 ## Development
 

@@ -36,6 +36,7 @@ jobs:
               )
               text = archive.read(entry_points).decode("utf-8")
           required = {
+              "sandbox/Dockerfile",
               "evaluation/fixtures/fastapi_project/app.py",
               "evaluation/fixtures/fastapi_project/labels.json",
               "evaluation/fixtures/fastapi_project/proposals.json",
@@ -61,7 +62,45 @@ jobs:
           trace = json.loads(reports[-1].read_text(encoding="utf-8"))["trace"]
           assert trace["platform"] == "Linux", trace["platform"]
           assert trace["enforcement_mode"] == "enforced", trace["enforcement_mode"]
+          assert trace["sandbox_backend"] == "subprocess", trace["sandbox_backend"]
           assert trace["double_run"] is True, trace["double_run"]
           assert trace["model_kind"] == "fake", trace["model_kind"]
           print(f"linux enforced baseline verified: {reports[-1]}")
+          PY
+
+  container:
+    name: container backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Build sandbox image
+        run: docker build -t testlens-sandbox:1 sandbox
+      - name: Container tests
+        env:
+          TESTLENS_CONTAINER_IMAGE: testlens-sandbox:1
+        run: python -m pytest -m container
+      - name: Container evaluation baseline
+        run: >-
+          python -m evaluation
+          --sandbox-backend container
+          --sandbox-image testlens-sandbox:1
+      - name: Verify container baseline
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          reports = sorted(Path("eval/reports").glob("*/report.json"))
+          assert reports, "evaluation wrote no report"
+          trace = json.loads(reports[-1].read_text(encoding="utf-8"))["trace"]
+          assert trace["sandbox_backend"] == "container", trace["sandbox_backend"]
+          assert trace["platform"] == "Linux", trace["platform"]
+          assert trace["enforcement_mode"] == "enforced", trace["enforcement_mode"]
+          assert trace["double_run"] is True, trace["double_run"]
+          print(f"container enforced baseline verified: {reports[-1]}")
           PY

@@ -27,6 +27,11 @@ from pipeline.run import run_test_pipeline
 from review.cross_check import cross_check, subjects_from_candidates
 from review.fake import DeterministicReviewer
 from sandbox import runner
+from sandbox.container import (
+    ContainerConfig,
+    ContainerRuntime,
+    SandboxBackend,
+)
 from sandbox.runner import ProjectProfile, SandboxConfig
 from storage.db import (
     open_database,
@@ -63,12 +68,14 @@ def build_parser() -> argparse.ArgumentParser:
     tests.add_argument("--output", default=None, help="report output root")
     tests.add_argument("--db", default=None, help="SQLite metadata path")
     tests.add_argument("--json", action="store_true", dest="as_json")
+    _add_sandbox_args(tests)
 
     audit = sub.add_parser("audit", help="scan rules and grade findings")
     audit.add_argument("project", help="target project directory")
     audit.add_argument("--output", default=None, help="report output root")
     audit.add_argument("--db", default=None, help="SQLite metadata path")
     audit.add_argument("--json", action="store_true", dest="as_json")
+    _add_sandbox_args(audit)
 
     evaluate = sub.add_parser("eval", help="run the fixture evaluation baseline")
     evaluate.add_argument("--output", default=None, help="report output root")
@@ -76,8 +83,27 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--seed", type=int, default=0)
     evaluate.add_argument("--db", default=None, help="SQLite metadata path")
     evaluate.add_argument("--json", action="store_true", dest="as_json")
+    _add_sandbox_args(evaluate)
 
     return parser
+
+
+def _add_sandbox_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--sandbox-backend",
+        choices=[item.value for item in SandboxBackend],
+        default=SandboxBackend.SUBPROCESS.value,
+    )
+    parser.add_argument(
+        "--sandbox-image",
+        default=None,
+        help="container image; required for --sandbox-backend container",
+    )
+    parser.add_argument(
+        "--sandbox-runtime",
+        choices=[item.value for item in ContainerRuntime],
+        default=ContainerRuntime.DOCKER.value,
+    )
 
 
 def _project(raw: str) -> Path:
@@ -93,6 +119,29 @@ def _profile(root: Path) -> ProjectProfile:
         root=root,
         test_paths=[],
         target_symbols=[],
+    )
+
+
+def _sandbox_config(args) -> SandboxConfig:
+    backend = SandboxBackend(args.sandbox_backend)
+    container = None
+    if backend == SandboxBackend.CONTAINER:
+        if not args.sandbox_image:
+            raise ValueError(
+                "--sandbox-image is required when --sandbox-backend is container"
+            )
+        container = ContainerConfig(
+            image=args.sandbox_image,
+            runtime=ContainerRuntime(args.sandbox_runtime),
+        )
+    elif args.sandbox_image:
+        raise ValueError(
+            "--sandbox-image requires --sandbox-backend container"
+        )
+    return SandboxConfig(
+        double_run=True,
+        backend=backend,
+        container=container,
     )
 
 
@@ -120,6 +169,7 @@ def _emit(report, args, kind: str, summary) -> None:
 def _tests(args) -> int:
     root = _project(args.project)
     profile = _profile(root)
+    config = _sandbox_config(args)
     selection = select_targets(profile)
     responses = (
         load_proposals_file(Path(args.proposals).expanduser().resolve())
@@ -127,13 +177,19 @@ def _tests(args) -> int:
         else None
     )
     llm = DeterministicFakeLLM(responses)
-    generation = generate_tests(profile, selection, llm)
+    generation = generate_tests(
+        profile,
+        selection,
+        llm,
+        sandbox_config=config,
+    )
     report = run_test_pipeline(
         profile,
         selection,
         generation,
         kill_threshold=args.threshold,
         seed=args.seed,
+        sandbox_config=config,
     )
 
     if args.db:
@@ -169,7 +225,7 @@ def _audit(args) -> int:
         subjects_from_candidates(scan, triage),
         DeterministicReviewer(),
     )
-    config = runner.resolve_config(SandboxConfig(double_run=True))
+    config = runner.resolve_config(_sandbox_config(args))
     with tempfile.TemporaryDirectory(prefix="testlens_cli_repro_") as temporary:
         repro = run_repro(
             profile,
@@ -220,6 +276,7 @@ def _evaluation(args) -> int:
         threshold=args.threshold,
         seed=args.seed,
         write=True,
+        sandbox_config=_sandbox_config(args),
     )
     if args.db:
         with open_database(args.db) as conn:

@@ -4,15 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-TestLens has reached v1 scope. The validation infrastructure (sandbox runner, double-run flaky detection, mutation operators and scoring), deterministic target selection, deterministic rule scan (R001–R005), the LLM interface with a deterministic fake, sandbox-gated candidate test generation, line-anchored audit triage, the false-positive cross-check, sandbox reproduction, evidence grading/`AuditReport` emission, the test-side pipeline closure, the evaluation harness on vendored fixtures, the CLI, README, and SQLite metadata are implemented. This file is the single source of truth for the v1 spec; the confirmed design decisions at the end are normative. Continue in Build order; do not add a real model client or an evaluation run before triage and review exist.
+TestLens v1.0.0 is released. The validation infrastructure (sandbox runner, double-run flaky detection, mutation operators and scoring), deterministic target selection, deterministic rule scan (R001–R005), the LLM interface with a deterministic fake, sandbox-gated candidate test generation, line-anchored audit triage, the false-positive cross-check, sandbox reproduction, evidence grading/`AuditReport` emission, the test-side pipeline closure, the evaluation harness on vendored fixtures, the CLI, README, and SQLite metadata are implemented. v2 begins with the opt-in container sandbox backend (increment 2A); `docs/v2-spec.md` records its accepted design. This file remains the single source of truth; the confirmed design decisions at the end are normative. Continue in Build order; do not add a real model client or an `LLM_INDEPENDENT` path before its v2 specification is confirmed.
 
 Goal: for small Python web projects (FastAPI/Flask style with clear routes and function boundaries), an LLM only proposes candidates. Sandboxed execution, mutation scoring, and an independent false-positive review decide what survives; attribution explains every rejection.
 
 ## Tech stack
 
 - Python 3.10+; standard library `ast` / `inspect` for static analysis; FastAPI/Flask decorator-style route extraction.
-- pytest runs inside a sandbox subprocess against the target project.
-- Sandbox: `subprocess` + timeout. POSIX uses `resource` hard limits (`RLIMIT_AS`, `RLIMIT_CPU`); Windows enforces timeout only and uses `psutil` (optional extra `sandbox`) for best-effort memory/CPU monitoring and limits. No ctypes Job Object. The deterministic evaluation baseline is Linux; reports state the platform and enforcement mode (`enforced` / `best-effort`).
+- pytest runs inside a sandbox subprocess (default) or an opt-in container against the target project.
+- Sandbox: `subprocess` + timeout. POSIX uses `resource` hard limits (`RLIMIT_AS`, `RLIMIT_CPU`); Windows enforces timeout only and uses `psutil` (optional extra `sandbox`) for best-effort memory/CPU monitoring and limits. No ctypes Job Object. The v2 container backend shells out to the Docker CLI, requires a Linux host, and enforces `--network none`, read-only root/project mounts, dropped capabilities, and PID/memory/CPU limits. The deterministic evaluation baseline is Linux; reports state the platform, backend, and enforcement mode (`enforced` / `best-effort`).
 - Mutation: self-built minimal AST mutator with a fixed, enumerable operator set; no external mutation service.
 - Metadata and reports: SQLite.
 - LLM behind an interface; deterministic fake is the default. Real-model runs are separately labeled.
@@ -20,7 +20,8 @@ Goal: for small Python web projects (FastAPI/Flask style with clear routes and f
 
 ## Source layout
 
-- `sandbox/` — `runner.py` (frozen execution report), `double_run.py` (flaky merge), `health.py` (generation gate: acceptance probe), `_pytest_plugin.py` (child-side test reporting and target-symbol coverage).
+- `sandbox/` — `runner.py` (frozen execution report), `double_run.py` (flaky merge), `health.py` (generation gate: acceptance probe), `container.py` (opt-in Docker backend availability and command construction), `Dockerfile` (default sandbox image), `_pytest_plugin.py` (child-side test reporting and target-symbol coverage).
+- `docs/` — `v2-spec.md` (accepted 2A container sandbox specification).
 - `mutation/` — fixed AST operator set and mutation scoring.
 - `project/` — deterministic Python file discovery, parsing, and enumerated skip reasons.
 - `targets/` — AST route extraction and target-selection reports.
@@ -211,11 +212,24 @@ Retract reasons: `REFUTED_BY_CONTEXT`, `NO_LINE_LOCATION`, `UNVERIFIABLE_CLAIM`,
 
 Reports are `TestReport` (`kept`, `discarded`, `flaky`, `trace`) and `AuditReport` (`findings`, `folded_suspicious`, `retracted`, `trace`). `KeptTest` carries `target_symbol`, `test_file`, `test_name`, `execution_status="passed"`, `mutation_kill_rate`, `mutations_run`, `mutations_killed`. Each `Finding` carries `file`, `line_start`, `line_end`, `rule_id` or `llm_finding_id`, `source`, `title`, `evidence_level`, and an optional `repro_artifact`. In v1, `source` is `RULE` or `RULE_WITH_LLM_TRIAGE`; `llm_finding_id` identifies a rule candidate whose trigger path was completed by LLM triage, never an LLM-independent discovery. `LLM_INDEPENDENT` is reserved for v2. `Retracted` carries the finding reference and a `RetractReason`.
 
+## Confirmed design decisions (v2 / 2A container backend)
+
+These decisions are normative for the container backend. `docs/v2-spec.md` holds the full design.
+
+- Backend selection is explicit: `SandboxConfig.backend` is `subprocess` (default) or `container`; `SandboxConfig.container` carries runtime, image, PID limit, tmpfs size, and user. No automatic fallback exists. If a container run is requested and the runtime or image is unavailable, the stage fails with an enumerated `RunnerError`/`SandboxHealthFailure`.
+- 2A supports Docker on Linux hosts only. Non-Linux hosts report `CONTAINER_UNSUPPORTED_PLATFORM`; Windows/macOS path translation is not treated as equivalent isolation.
+- Every run is a fresh container: `--network none`, `--read-only`, `--cap-drop ALL`, `no-new-privileges`, PID limit, memory cap (with swap capped to the same value), CPU-time ulimit, non-root host UID/GID, project copy mounted read-only at `/project`, artifacts write-mounted at `/artifacts`, and `/tmp` as tmpfs.
+- The container environment is an allowlist. Host environment variables are never inherited; `profile.env` is explicit opt-in. This closes the v1 environment-inheritance limitation for the container backend.
+- Container memory and CPU limits are enforced and reported as `enforcement_mode=enforced`. `peak_rss_mb` and `cpu_time_seconds` are `None` unless the runtime provides a measurement; no values are estimated. `limits_hit` distinguishes timeout and OOM (`State.OOMKilled`).
+- `double_run`, mutation scoring, reproduction, the health probe, `pipeline`, and `evaluation` all use the configured backend. Each attempt and each mutant gets its own container.
+- New report fields are additive only: `SandboxConfig.backend`, `SandboxConfig.container`, `ExecutionTrace.backend`, `SandboxHealth.backend`, `TestPipelineTrace.sandbox_backend`, and `EvaluationTrace.sandbox_backend`. `SandboxHealthFailure` adds `CONTAINER_RUNTIME_UNAVAILABLE`, `CONTAINER_IMAGE_UNAVAILABLE`, `CONTAINER_PROBE_FAILED`, and `CONTAINER_UNSUPPORTED_PLATFORM`.
+- The default image contract is Python 3.12 + pytest, no framework or project dependencies. Projects with dependencies supply their own image; TestLens never runs `pip install` per run. CI builds `sandbox/Dockerfile` and verifies the container evaluation baseline.
+
 ## Environment note
 
 Development happens on Windows (Git Bash). `resource` is POSIX-only. POSIX enforces `RLIMIT_AS`/`RLIMIT_CPU`; Windows enforces the subprocess timeout and uses `psutil` (optional extra `sandbox`) for best-effort memory/CPU limits. Do not introduce ctypes Job Object code. The deterministic evaluation baseline is Linux; every report states the platform and whether limits were `enforced` or `best-effort`.
 
-CI (`.github/workflows/ci.yml`) runs the suite and `python -m evaluation` on Ubuntu for Python 3.10 and 3.12 and asserts `platform=Linux`, `enforcement_mode=enforced`, `double_run=true`, and `model_kind=fake`. The Linux `enforced` baseline has not been executed on the Windows development machine; local Windows reports state `best-effort`.
+CI (`.github/workflows/ci.yml`) runs the suite and `python -m evaluation` on Ubuntu for Python 3.10 and 3.12 and asserts `platform=Linux`, `enforcement_mode=enforced`, `double_run=true`, and `model_kind=fake`. A separate container job builds `sandbox/Dockerfile`, runs `pytest -m container`, and verifies the container evaluation baseline reports `sandbox_backend=container` and `enforcement_mode=enforced`. The container backend is not exercised on the Windows development machine (no Docker/WSL); local runs skip the container tests and Windows reports stay `best-effort`.
 
 ## Commands
 
@@ -229,11 +243,14 @@ CI (`.github/workflows/ci.yml`) runs the suite and `python -m evaluation` on Ubu
 - Run test pipeline: `python -m pytest tests/test_pipeline.py`
 - Run evaluation tests: `python -m pytest tests/test_evaluation.py`
 - Run the evaluation baseline: `python -m evaluation` (writes under `eval/reports/`); `python -m evaluation --no-write` prints metrics only
+- Build the default container image: `docker build -t testlens-sandbox:1 sandbox`
+- Run container tests: `TESTLENS_CONTAINER_IMAGE=testlens-sandbox:1 python -m pytest -m container`
+- Run the container evaluation baseline: `python -m evaluation --sandbox-backend container --sandbox-image testlens-sandbox:1`
 - Run CLI/storage tests: `python -m pytest tests/test_cli.py`, `python -m pytest tests/test_storage.py`
 - Run the CLI without installing: `python -m cli --help`; after install: `testlens tests|audit|eval ...`
 - Run one test: `python -m pytest tests/test_runner.py::test_runner_strong_passes_and_covers_target`
 
-Tests invoke pytest inside a sandbox subprocess against `tests/fixtures/sample_project` and `tests/fixtures/pipeline_project`; fixture tests are excluded from the outer collection. The README states that production isolation requires containers even though v1 uses `subprocess` + resource limits.
+Tests invoke pytest inside a sandbox subprocess against `tests/fixtures/sample_project` and `tests/fixtures/pipeline_project`; fixture tests are excluded from the outer collection. Container tests are marked `container` and skip when Docker or the configured image is unavailable. The README states that production isolation requires containers; the opt-in container backend is the v2 path, while `subprocess` remains the default.
 
 ## Confirmed design decisions (v1)
 

@@ -10,18 +10,33 @@ import hashlib
 import json
 import os
 import platform as platform_module
+import shutil
 import signal
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+from .container import (
+    ContainerConfig,
+    SandboxBackend,
+    build_run_command,
+    check_available,
+    container_env,
+    container_path,
+    inspect_state,
+    kill_container,
+    new_container_name,
+    remove_container,
+)
 
 try:  # Optional dependency: psutil gives Windows best-effort limits.
     import psutil
@@ -34,7 +49,7 @@ except ImportError:  # pragma: no cover - Windows
     resource = None
 
 
-RUNNER_VERSION = "0.1.0"
+RUNNER_VERSION = "0.2.0"
 
 
 class EnforcementMode(str, Enum):
@@ -111,6 +126,8 @@ class SandboxConfig(BaseModel):
     enforcement_mode: EnforcementMode = EnforcementMode.BEST_EFFORT
     platform: str = Field(default_factory=lambda: platform_module.system())
     coverage_source: CoverageSource = CoverageSource.SYS_SETTRACE
+    backend: SandboxBackend = SandboxBackend.SUBPROCESS
+    container: ContainerConfig | None = None
 
 
 class ResourceUsage(BaseModel):
@@ -205,6 +222,7 @@ class ExecutionTrace(BaseModel):
     python_version: str = Field(default_factory=lambda: sys.version.split()[0])
     cwd: str = ""
     env_digest: str = ""
+    backend: SandboxBackend = SandboxBackend.SUBPROCESS
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -268,7 +286,13 @@ def resolve_profile(profile: ProjectProfile) -> ProjectProfile:
 
 def resolve_config(config: SandboxConfig) -> SandboxConfig:
     platform_name = platform_module.system()
-    if platform_name == "Windows":
+    if config.backend == SandboxBackend.CONTAINER:
+        mode = (
+            EnforcementMode.ENFORCED
+            if platform_name == "Linux"
+            else EnforcementMode.BEST_EFFORT
+        )
+    elif platform_name == "Windows":
         mode = EnforcementMode.BEST_EFFORT
     elif resource is not None and (config.memory_limit_mb or config.cpu_limit_seconds):
         mode = EnforcementMode.ENFORCED
@@ -511,7 +535,7 @@ def _build_outcomes(
     return outcomes
 
 
-def run_once(
+def _run_once_subprocess(
     profile: ProjectProfile,
     config: SandboxConfig,
     *,
@@ -704,3 +728,336 @@ def run_once(
         stderr_artifact=str(stderr_artifact),
     )
     return RunAttempt(result=result, errors=errors, warnings=warnings)
+
+
+@dataclass
+class _LimitView:
+    limits_hit: set[str] = field(default_factory=set)
+
+
+def _empty_attempt(
+    *,
+    run_index: int,
+    started_at: str,
+    elapsed_ms: int,
+    config: SandboxConfig,
+    errors: list[RunnerError],
+    warnings: list[str] | None = None,
+) -> RunAttempt:
+    return RunAttempt(
+        result=TestRunResult(
+            run_index=run_index,
+            started_at=started_at,
+            elapsed_ms=elapsed_ms,
+            exit_code=-1,
+            timed_out=False,
+            tests=[],
+            resource_usage=ResourceUsage(
+                wall_time_ms=elapsed_ms,
+                enforcement_mode=config.enforcement_mode,
+            ),
+        ),
+        errors=errors,
+        warnings=list(warnings or []),
+    )
+
+
+def _prepare_container_plugin_files(
+    profile: ProjectProfile,
+    config: SandboxConfig,
+    artifact_dir: Path,
+) -> Path:
+    container_config = config.container
+    if container_config is None:
+        raise ValueError("container backend requires container configuration")
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    project_root = profile.root.expanduser().resolve()
+    plugin_path = artifact_dir / "_pytest_plugin.py"
+    shutil.copy2(Path(__file__).with_name("_pytest_plugin.py"), plugin_path)
+    pytest_config_path = artifact_dir / "pytest.ini"
+    pytest_config_path.write_text("[pytest]\naddopts =\n", encoding="utf-8")
+    plugin_config_path = artifact_dir / "plugin_config.json"
+    container_test_paths: list[str] = []
+    external_dir = artifact_dir / "_external_tests"
+    for index, path in enumerate(profile.test_paths):
+        try:
+            container_test_paths.append(container_path(path, project_root))
+        except ValueError:
+            # Repro scripts live outside the project by design. Copy them into
+            # the writable artifacts mount instead of mounting their host
+            # directory.
+            external_dir.mkdir(parents=True, exist_ok=True)
+            destination = external_dir / f"{index}_{path.name}"
+            shutil.copy2(path, destination)
+            container_test_paths.append(
+                f"/artifacts/_external_tests/{destination.name}"
+            )
+    plugin_config = {
+        "project_root": "/project",
+        "test_paths": container_test_paths,
+        "target_symbols": [
+            {
+                "symbol_id": target.symbol_id,
+                "name": target.name,
+                "file": container_path(target.file, project_root),
+                "line_start": target.line_start,
+                "line_end": target.line_end,
+            }
+            for target in profile.target_symbols
+        ],
+        "output_path": "/artifacts/plugin_output.json",
+        "pytest_config": "/artifacts/pytest.ini",
+        "timeout_seconds": config.timeout_seconds,
+    }
+    plugin_config_path.write_text(
+        json.dumps(plugin_config, indent=2), encoding="utf-8"
+    )
+    return plugin_config_path
+
+
+def _run_once_container(
+    profile: ProjectProfile,
+    config: SandboxConfig,
+    *,
+    run_index: int,
+    artifact_dir: Path,
+) -> RunAttempt:
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    started_at = datetime.now(timezone.utc).isoformat()
+    started = time.perf_counter()
+    errors: list[RunnerError] = []
+    warnings: list[str] = []
+    container_config = config.container
+    if container_config is None:
+        errors.append(
+            RunnerError(
+                stage=RunnerStage.EXECUTION,
+                message="container backend requires container configuration",
+                fatal=True,
+            )
+        )
+        return _empty_attempt(
+            run_index=run_index,
+            started_at=started_at,
+            elapsed_ms=int((time.perf_counter() - started) * 1000),
+            config=config,
+            errors=errors,
+        )
+
+    availability = check_available(container_config)
+    if not availability.available:
+        errors.append(
+            RunnerError(
+                stage=RunnerStage.EXECUTION,
+                message=(
+                    f"container backend unavailable "
+                    f"({availability.failure.value if availability.failure else 'unknown'}): "
+                    f"{availability.detail}"
+                ),
+                fatal=True,
+            )
+        )
+        return _empty_attempt(
+            run_index=run_index,
+            started_at=started_at,
+            elapsed_ms=int((time.perf_counter() - started) * 1000),
+            config=config,
+            errors=errors,
+        )
+
+    try:
+        plugin_config_path = _prepare_container_plugin_files(
+            profile, config, artifact_dir
+        )
+    except (OSError, ValueError) as exc:
+        errors.append(
+            RunnerError(
+                stage=RunnerStage.EXECUTION,
+                message=f"could not prepare container sandbox: {exc}",
+                fatal=True,
+            )
+        )
+        return _empty_attempt(
+            run_index=run_index,
+            started_at=started_at,
+            elapsed_ms=int((time.perf_counter() - started) * 1000),
+            config=config,
+            errors=errors,
+        )
+
+    name = new_container_name()
+    command = build_run_command(
+        container_config,
+        name=name,
+        project_root=profile.root.expanduser().resolve(),
+        artifacts_root=artifact_dir,
+        memory_limit_mb=config.memory_limit_mb,
+        cpu_limit_seconds=config.cpu_limit_seconds,
+        env=container_env(profile.env),
+    )
+    popen_kwargs: dict[str, Any] = {
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "start_new_session": True,
+    }
+    try:
+        process = subprocess.Popen(command, **popen_kwargs)
+    except (OSError, subprocess.SubprocessError) as exc:
+        errors.append(
+            RunnerError(
+                stage=RunnerStage.EXECUTION,
+                message=f"could not start container runtime: {exc}",
+                fatal=True,
+            )
+        )
+        return _empty_attempt(
+            run_index=run_index,
+            started_at=started_at,
+            elapsed_ms=int((time.perf_counter() - started) * 1000),
+            config=config,
+            errors=errors,
+        )
+
+    timed_out = False
+    limits_hit: set[str] = set()
+    stdout = ""
+    stderr = ""
+    try:
+        try:
+            stdout, stderr = process.communicate(timeout=config.timeout_seconds)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            limits_hit.add("timeout")
+            kill_container(container_config, name)
+            try:
+                stdout, stderr = process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                try:
+                    stdout, stderr = process.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    stdout, stderr = "", ""
+        state = inspect_state(container_config, name)
+        if state.get("OOMKilled"):
+            limits_hit.add("memory")
+    finally:
+        remove_container(container_config, name)
+
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    exit_code = process.returncode if process.returncode is not None else -1
+    if exit_code in (125, 126, 127):
+        detail = (stderr or stdout or "").strip()
+        errors.append(
+            RunnerError(
+                stage=RunnerStage.EXECUTION,
+                message=(
+                    f"container runtime failed with exit code {exit_code}: "
+                    f"{detail[-1000:] or 'no runtime output'}"
+                ),
+                fatal=True,
+            )
+        )
+
+    stdout_artifact = artifact_dir / "run_stdout.txt"
+    stderr_artifact = artifact_dir / "run_stderr.txt"
+    stdout_artifact.write_text(stdout or "", encoding="utf-8")
+    stderr_artifact.write_text(stderr or "", encoding="utf-8")
+
+    plugin_output_path = artifact_dir / "plugin_output.json"
+    plugin_data: dict[str, Any] = {}
+    if plugin_output_path.exists():
+        try:
+            plugin_data = json.loads(
+                plugin_output_path.read_text(encoding="utf-8")
+            )
+        except (json.JSONDecodeError, OSError) as exc:
+            errors.append(
+                RunnerError(
+                    stage=RunnerStage.EXECUTION,
+                    message=f"invalid plugin output: {exc}",
+                    fatal=True,
+                )
+            )
+    else:
+        errors.append(
+            RunnerError(
+                stage=RunnerStage.EXECUTION,
+                message="plugin produced no output; see stderr artifact",
+                fatal=True,
+            )
+        )
+
+    for item in plugin_data.get("collection_errors", []):
+        errors.append(
+            RunnerError(
+                stage=RunnerStage.COLLECTION,
+                message=(
+                    f"{item.get('nodeid', '?')}: "
+                    f"{item.get('message', 'collection error')}"
+                ),
+                fatal=False,
+            )
+        )
+
+    limit_view = _LimitView(limits_hit=limits_hit)
+    outcomes = _build_outcomes(plugin_data, config, timed_out, limit_view)
+    if timed_out and not outcomes:
+        errors.append(
+            RunnerError(
+                stage=RunnerStage.COLLECTION,
+                message="pytest timed out before reporting a test",
+                fatal=False,
+            )
+        )
+
+    resource_usage = ResourceUsage(
+        wall_time_ms=elapsed_ms,
+        cpu_time_seconds=None,
+        peak_rss_mb=None,
+        limits_hit=sorted(limits_hit),
+        enforcement_mode=config.enforcement_mode,
+    )
+    result = TestRunResult(
+        run_index=run_index,
+        started_at=started_at,
+        elapsed_ms=elapsed_ms,
+        exit_code=exit_code,
+        timed_out=timed_out,
+        tests=outcomes,
+        resource_usage=resource_usage,
+        stdout_artifact=str(stdout_artifact),
+        stderr_artifact=str(stderr_artifact),
+    )
+    return RunAttempt(result=result, errors=errors, warnings=warnings)
+
+
+def run_once(
+    profile: ProjectProfile,
+    config: SandboxConfig,
+    *,
+    run_index: int = 0,
+    artifact_dir: Path | None = None,
+) -> RunAttempt:
+    config = resolve_config(config)
+    if config.backend == SandboxBackend.CONTAINER:
+        resolved = resolve_profile(profile)
+        target_dir = (
+            Path(artifact_dir)
+            if artifact_dir is not None
+            else Path(tempfile.mkdtemp(prefix="testlens_run_"))
+        )
+        return _run_once_container(
+            resolved,
+            config,
+            run_index=run_index,
+            artifact_dir=target_dir,
+        )
+    return _run_once_subprocess(
+        profile,
+        config,
+        run_index=run_index,
+        artifact_dir=artifact_dir,
+    )

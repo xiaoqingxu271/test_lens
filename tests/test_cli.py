@@ -190,3 +190,21 @@ def test_eval_cli_delegates_to_the_harness(monkeypatch, capsys):
     assert captured["seed"] == 2
     assert captured["write"] is True
     assert capsys.readouterr().out == ""
+
+
+def test_cli_requires_an_image_for_the_container_backend(tmp_path, capsys):
+    project = _project(tmp_path)
+    exit_code = cli.main(
+        ["tests", str(project), "--sandbox-backend", "container"]
+    )
+
+    assert exit_code == 2
+    assert "--sandbox-image is required" in capsys.readouterr().err
+
+
+def test_cli_rejects_an_image_without_the_container_backend(tmp_path, capsys):
+    project = _project(tmp_path)
+    exit_code = cli.main(["tests", str(project), "--sandbox-image", "image:1"])
+
+    assert exit_code == 2
+    assert "requires --sandbox-backend container" in capsys.readouterr().err

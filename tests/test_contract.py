@@ -27,6 +27,7 @@ from pipeline.models import (
     TestReport as PipelineReport,
 )
 from review.models import CrossCheckResult, EvidenceLine
+from sandbox.container import ContainerRuntime, SandboxBackend
 from sandbox.runner import (
     EnforcementMode,
     ExecutionReport,
@@ -70,6 +71,8 @@ CONTRACTS = {
         "enforcement_mode",
         "platform",
         "coverage_source",
+        "backend",
+        "container",
     },
     RunResult: {
         "run_index",
@@ -165,6 +168,7 @@ CONTRACTS = {
         "python_version",
         "cwd",
         "env_digest",
+        "backend",
         "warnings",
     },
     RunnerError: {"stage", "message", "fatal"},
@@ -322,6 +326,11 @@ def test_contract_enums_match_the_specification():
         "enforced",
         "best-effort",
     }
+    assert {item.value for item in SandboxBackend} == {
+        "subprocess",
+        "container",
+    }
+    assert {item.value for item in ContainerRuntime} == {"docker"}
 
 
 def test_evaluation_fixtures_are_packaged_with_the_module():

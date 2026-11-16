@@ -22,7 +22,7 @@ from pathlib import Path, PurePosixPath
 from llm.base import LLMClient
 from llm.models import LLMPurpose, LLMRequest, LLMResponse, ModelKind
 from sandbox.health import SandboxHealth, check_sandbox_ready
-from sandbox.runner import ProjectProfile
+from sandbox.runner import ProjectProfile, SandboxConfig
 from targets.models import SelectedTarget, TargetSelectionReport
 
 from .models import (
@@ -360,13 +360,17 @@ def generate_tests(
     *,
     sandbox_health: SandboxHealth | None = None,
     health_timeout_seconds: float = 30.0,
+    sandbox_config: SandboxConfig | None = None,
 ) -> GenerationReport:
     """Propose, validate, and enumerate candidate tests for selected targets."""
     started_at = datetime.now(timezone.utc).isoformat()
     started = time.perf_counter()
 
     if sandbox_health is None:
-        sandbox_health = check_sandbox_ready(timeout_seconds=health_timeout_seconds)
+        sandbox_health = check_sandbox_ready(
+            timeout_seconds=health_timeout_seconds,
+            config=sandbox_config,
+        )
     if not sandbox_health.ready:
         raise SandboxUnavailableError(sandbox_health)
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from llm.models import ModelKind
+from sandbox.container import SandboxBackend
 from sandbox.runner import EnforcementMode
 
 
@@ -117,6 +118,7 @@ class EvaluationTrace(BaseModel):
     double_run: bool = True
     platform: str = ""
     enforcement_mode: EnforcementMode = EnforcementMode.BEST_EFFORT
+    sandbox_backend: SandboxBackend = SandboxBackend.SUBPROCESS
     sandbox_ready: bool = False
     warnings: list[str] = Field(default_factory=list)
 

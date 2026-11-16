@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Opt-in Docker container backend for the sandbox (`--sandbox-backend
+  container --sandbox-image IMAGE`), with `--network none`, read-only project
+  and root filesystems, dropped capabilities, PID/memory/CPU limits, an
+  allowlisted environment, and explicit no-fallback availability errors.
+- `sandbox/container.py`, `sandbox/Dockerfile`, and container tests in
+  `tests/test_container.py` / `tests/test_container_config.py`.
+- `docs/v2-spec.md` accepted 2A container specification.
+
 ## 1.0.0 — 2026-11-16
 
 First complete v1 release. A model only proposes candidates; sandboxed

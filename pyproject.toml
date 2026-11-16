@@ -21,9 +21,11 @@ testlens = "cli.main:main"
 
 [tool.setuptools.package-data]
 evaluation = ["fixtures/*/*.py", "fixtures/*/*.json"]
+sandbox = ["Dockerfile"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 norecursedirs = ["fixtures", ".git", ".venv", "__pycache__"]
 pythonpath = ["."]
 addopts = "-ra"
+markers = ["container: requires a Linux host with Docker and a sandbox image"]

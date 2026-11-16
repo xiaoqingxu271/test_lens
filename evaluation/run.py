@@ -181,7 +181,9 @@ def run_evaluation(
     if not roots:
         raise FixtureError("no fixtures provided")
 
-    health = check_sandbox_ready(timeout_seconds=health_timeout_seconds)
+    health = check_sandbox_ready(
+        timeout_seconds=health_timeout_seconds, config=config
+    )
     if not health.ready:
         raise SandboxUnavailableError(health)
 
@@ -220,6 +222,7 @@ def run_evaluation(
         double_run=config.double_run,
         platform=config.platform,
         enforcement_mode=config.enforcement_mode,
+        sandbox_backend=config.backend,
         sandbox_ready=health.ready,
         warnings=sorted(warnings),
     )
@@ -254,6 +257,7 @@ def render_summary(report: EvaluationReport) -> str:
         f"- seed: {trace.seed}",
         f"- double_run: {trace.double_run}",
         f"- platform: {trace.platform}",
+        f"- sandbox_backend: `{trace.sandbox_backend.value}`",
         f"- enforcement_mode: {trace.enforcement_mode.value}",
         "",
     ]

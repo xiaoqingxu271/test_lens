@@ -21,6 +21,11 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from . import double_run
+from .container import (
+    ContainerFailure,
+    SandboxBackend,
+    check_available,
+)
 from .runner import (
     EnforcementMode,
     ExecutionReport,
@@ -29,6 +34,7 @@ from .runner import (
     RUNNER_VERSION,
     SandboxConfig,
     TargetSymbol,
+    resolve_config,
 )
 
 PROBE_SYMBOL_ID = "classify"
@@ -74,6 +80,10 @@ class SandboxHealthFailure(str, Enum):
     WEAK_TEST_FAILED = "weak_test_failed"
     DOUBLE_RUN_NOT_APPLIED = "double_run_not_applied"
     FLAKY_PROBE = "flaky_probe"
+    CONTAINER_RUNTIME_UNAVAILABLE = "container_runtime_unavailable"
+    CONTAINER_IMAGE_UNAVAILABLE = "container_image_unavailable"
+    CONTAINER_PROBE_FAILED = "container_probe_failed"
+    CONTAINER_UNSUPPORTED_PLATFORM = "container_unsupported_platform"
 
 
 class SandboxHealth(BaseModel):
@@ -84,6 +94,7 @@ class SandboxHealth(BaseModel):
     enforcement_mode: EnforcementMode
     runner_version: str = RUNNER_VERSION
     double_run: bool = PROBE_DOUBLE_RUN
+    backend: SandboxBackend = SandboxBackend.SUBPROCESS
     tests_reported: int = 0
     strong_test_passed: bool = False
     strong_covers_target: bool = False
@@ -164,6 +175,7 @@ def evaluate_probe(report: ExecutionReport) -> SandboxHealth:
         enforcement_mode=report.sandbox_config.enforcement_mode,
         runner_version=report.trace.runner_version,
         double_run=report.sandbox_config.double_run,
+        backend=report.sandbox_config.backend,
         tests_reported=len(report.tests),
         strong_test_passed=strong_passed,
         strong_covers_target=covers,
@@ -173,8 +185,59 @@ def evaluate_probe(report: ExecutionReport) -> SandboxHealth:
     )
 
 
-def check_sandbox_ready(*, timeout_seconds: float = 30.0) -> SandboxHealth:
+def _container_health_failure(
+    failure: ContainerFailure | None,
+) -> SandboxHealthFailure:
+    return {
+        ContainerFailure.RUNTIME_UNAVAILABLE: (
+            SandboxHealthFailure.CONTAINER_RUNTIME_UNAVAILABLE
+        ),
+        ContainerFailure.IMAGE_UNAVAILABLE: (
+            SandboxHealthFailure.CONTAINER_IMAGE_UNAVAILABLE
+        ),
+        ContainerFailure.UNSUPPORTED_PLATFORM: (
+            SandboxHealthFailure.CONTAINER_UNSUPPORTED_PLATFORM
+        ),
+        ContainerFailure.PROBE_FAILED: SandboxHealthFailure.CONTAINER_PROBE_FAILED,
+    }.get(failure, SandboxHealthFailure.CONTAINER_PROBE_FAILED)
+
+
+def check_sandbox_ready(
+    *,
+    timeout_seconds: float = 30.0,
+    config: SandboxConfig | None = None,
+) -> SandboxHealth:
     """Run the acceptance probe in an isolated temporary project."""
+    resolved = resolve_config(
+        (config or SandboxConfig()).model_copy(
+            update={"timeout_seconds": timeout_seconds, "double_run": True}
+        )
+    )
+    if resolved.backend == SandboxBackend.CONTAINER:
+        if resolved.container is None:
+            return SandboxHealth(
+                ready=False,
+                checked_at=datetime.now(timezone.utc).isoformat(),
+                elapsed_ms=0,
+                platform=resolved.platform,
+                enforcement_mode=resolved.enforcement_mode,
+                backend=resolved.backend,
+                failures=[SandboxHealthFailure.CONTAINER_PROBE_FAILED],
+                details=["container backend requires container configuration"],
+            )
+        availability = check_available(resolved.container)
+        if not availability.available:
+            return SandboxHealth(
+                ready=False,
+                checked_at=datetime.now(timezone.utc).isoformat(),
+                elapsed_ms=0,
+                platform=resolved.platform,
+                enforcement_mode=resolved.enforcement_mode,
+                backend=resolved.backend,
+                failures=[_container_health_failure(availability.failure)],
+                details=[availability.detail],
+            )
+
     started = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="testlens_health_") as tmp:
         root = Path(tmp)
@@ -200,7 +263,7 @@ def check_sandbox_ready(*, timeout_seconds: float = 30.0) -> SandboxHealth:
         )
         report = double_run.execute(
             profile,
-            SandboxConfig(timeout_seconds=timeout_seconds, double_run=PROBE_DOUBLE_RUN),
+            resolved.model_copy(update={"double_run": PROBE_DOUBLE_RUN}),
             artifact_root=root / "artifacts",
         )
     health = evaluate_probe(report)
