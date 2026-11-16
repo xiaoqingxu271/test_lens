@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-TestLens is an early v1 repo. The validation infrastructure (sandbox runner, double-run flaky detection, mutation operators and scoring) is implemented; target selection, test generation, LLM stages, audit stages, and the evaluation harness are not. This file is the single source of truth for the v1 spec; the confirmed design decisions at the end are normative. Do not scaffold test generation or LLM calls before the remaining validation infrastructure exists (see Build order).
+TestLens is an early v1 repo. The validation infrastructure (sandbox runner, double-run flaky detection, mutation operators and scoring), deterministic target selection, and deterministic rule scan (R001–R005) are implemented; test generation, LLM stages, audit cross-check/reproduction/grading, the evaluation harness, CLI, README, and SQLite metadata are not. This file is the single source of truth for the v1 spec; the confirmed design decisions at the end are normative. Do not scaffold test generation or LLM calls before the remaining validation infrastructure exists (see Build order).
 
 Goal: for small Python web projects (FastAPI/Flask style with clear routes and function boundaries), an LLM only proposes candidates. Sandboxed execution, mutation scoring, and an independent false-positive review decide what survives; attribution explains every rejection.
 
@@ -17,6 +17,14 @@ Goal: for small Python web projects (FastAPI/Flask style with clear routes and f
 - Metadata and reports: SQLite.
 - LLM behind an interface; deterministic fake is the default. Real-model runs are separately labeled.
 - No LangChain; stages are explicit functions, each independently testable.
+
+## Source layout
+
+- `sandbox/` — `runner.py` (frozen execution report), `double_run.py` (flaky merge), `_pytest_plugin.py` (child-side test reporting and target-symbol coverage).
+- `mutation/` — fixed AST operator set and mutation scoring.
+- `project/` — deterministic Python file discovery, parsing, and enumerated skip reasons.
+- `targets/` — AST route extraction and target-selection reports.
+- `audit/` — rule scan and R001–R005 handlers; `RuleCandidate` is an intermediate stage output, not a final `Finding`.
 
 ## Build order (non-negotiable)
 
@@ -68,6 +76,30 @@ LLM never owns line localization or rule matching; those stay deterministic. A f
 
 Rule IDs are used in reports and evaluation grouping. Adding a rule requires updating the evaluation labels and this list.
 
+### Target selection (v1)
+
+`targets/selection.py::select_targets(profile, coverage_rank=None)` is AST-only and never imports or executes the project.
+
+- Scans module-level `def`/`async def` only; class methods and nested functions are out of scope in v1.
+- Recognized decorator calls: `.get`, `.post`, `.put`, `.delete`, `.patch`, `.options`, `.head`, `.trace`, `.route`, `.api_route`; `.websocket` is recorded as `UNSUPPORTED_DECORATOR`.
+- Path must be a literal string (positional, or `path`/`rule` keyword). `route`/`api_route` methods come from a literal list/tuple/set (or a single string), default to `GET`; dynamic/missing path or methods produce `SkippedRoute` with `DYNAMIC_PATH`, `DYNAMIC_METHODS`, or `MISSING_PATH`.
+- `SelectedTarget.symbol_id` is `<relative POSIX path>::<function name>`; `line_start` is the `def` line and `line_end` the function end.
+- Static order is `(relative_file, line_start, name)`. Optional `coverage_rank` is keyed by `symbol_id` and only reorders (descending rank, then static tie-break); it never removes a target and sets `order_reason=COVERAGE`.
+- File discovery is shared with rule scan: excludes test directories/files, `.venv`, caches, VCS metadata, `migrations`/`alembic`, `conftest.py`, and `setup.py`. Syntax/decode/read failures become `SkippedFile` with `SYNTAX_ERROR`, `DECODE_ERROR`, `READ_ERROR`.
+- v1 does not resolve FastAPI `APIRouter(prefix=...)`, Flask `url_prefix`, or dynamically constructed routes; the route path is the declared literal. Test generation is responsible for effective-path composition.
+
+### Rule scan (v1)
+
+`audit/rule_scan.py::scan_rules(profile, rules=ALL_RULES)` parses files (no execution) and emits `RuleCandidate` records; `rule_id`, exact line span, `snippet`/`snippet_hash`, and a stable `finding_id` are deterministic. `source` is `RULE`; `RULE_WITH_LLM_TRIAGE`/`LLM_INDEPENDENT` are not emitted here.
+
+- R001: one candidate per function/lambda with mutable defaults. Detects list/dict/set literals, list/dict/set comprehensions, tuples containing a mutable default, and unshadowed calls to `list`/`dict`/`set`/`bytearray` (including `builtins.*`). A module-level binding of a constructor name suppresses that constructor; outer-function-local shadowing of nested defaults is not modeled.
+- R002: same-function, conservative. Tracks simple `x = None`; flags direct `x.attr`, `x[...]`, `x(...)` only. Guards (`x is not None`, `x`, `assert ...`, `not x`, `and`/`or`, conditional expressions) are honored in the branch. State is cleared after `if`/`for`/`while`/`try`/`with`/`match` to prefer false negatives. Comprehensions, lambdas, nested functions, class bodies, and module-level code are not analyzed.
+- R003: direct `return`/`raise` in a statement list; one candidate per outermost unreachable region; nested statements inside that region are not re-reported. `else`/`finally`/`except` blocks are separate statement lists and are not false positives.
+- R004: every bare `except:`; one candidate per handler; the message distinguishes `pass`/`...` swallowing from a bare handler that does not narrow.
+- R005: fixed resource call set: `builtins.open`, `io.open`, `codecs.open`, `gzip.open`, `bz2.open`, `lzma.open`, `tarfile.open`, `zipfile.ZipFile`, `tempfile.NamedTemporaryFile`, `tempfile.TemporaryFile`, `tempfile.SpooledTemporaryFile`, `sqlite3.connect`, `socket.socket`, `socket.create_connection`, `urllib.request.urlopen`. Calls in `with`/`async with` context expressions are exempt; calls in the body are not. Import aliases (`import x as y`, `from x import y as z`) and local/module/parameter shadowing are resolved; wildcard imports are not resolved.
+- Known R005 limits in v1: no `try/finally: close()` analysis, no `ExitStack.enter_context`, no `pathlib.Path.open`/`requests` detection, and `sqlite3.connect` under `with` is treated as managed even though that context manager commits/rolls back rather than closing. These are explicit false-positive/false-negative classes for the cross-check and evaluation fixtures.
+- `RuleScanTrace` records `files_scanned`, `files_skipped`, `candidates_found`, per-rule counts, `rules_run`, and elapsed time. `RuleCandidate` is not a final `Finding`: evidence levels, triage, cross-check, reproduction, and `AuditReport` remain later stages.
+
 ## Evaluation baseline
 
 - Two vendored minimal fixture projects (one FastAPI, one Flask), with pinned dependencies, offline execution, known defects, and known false positives. Real OSS projects are optional, pinned by commit, and are not the deterministic baseline.
@@ -103,6 +135,7 @@ Development happens on Windows (Git Bash). `resource` is POSIX-only. POSIX enfor
 - Install dev dependencies: `python -m pip install -e ".[dev]"`
 - Run the suite: `python -m pytest`
 - Run one file: `python -m pytest tests/test_mutation_score.py`
+- Run target selection or rule scan: `python -m pytest tests/test_target_selection.py`, `python -m pytest tests/test_rule_scan.py`
 - Run one test: `python -m pytest tests/test_runner.py::test_runner_strong_passes_and_covers_target`
 
 Tests invoke pytest inside a sandbox subprocess against `tests/fixtures/sample_project`; the fixture tests are excluded from the outer collection. The README is still pending and must state that production isolation uses containers even though v1 uses `subprocess` + resource limits.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+from collections.abc import Sequence
 from pathlib import Path
 
 from sandbox.runner import ProjectProfile, SandboxConfig, TargetSymbol
@@ -34,3 +35,37 @@ def make_profile(test_file: str) -> ProjectProfile:
 def sandbox_config(**overrides) -> SandboxConfig:
     base = SandboxConfig(timeout_seconds=30.0, double_run=False)
     return base.model_copy(update=overrides)
+
+
+def make_root_profile(
+    root: Path,
+    *,
+    test_paths: Sequence[Path | str] = (),
+) -> ProjectProfile:
+    return ProjectProfile(
+        profile_id=Path(root).name,
+        root=Path(root),
+        test_paths=[Path(path) for path in test_paths],
+        target_symbols=[],
+    )
+
+
+def line_of(
+    path: Path,
+    marker: str,
+    *,
+    after: str | None = None,
+) -> int:
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    start = 0
+    if after is not None:
+        for index, line in enumerate(lines):
+            if after in line:
+                start = index
+                break
+        else:
+            raise AssertionError(f"{after!r} not found in {path}")
+    for index in range(start, len(lines)):
+        if marker in lines[index]:
+            return index + 1
+    raise AssertionError(f"{marker!r} not found in {path}")
