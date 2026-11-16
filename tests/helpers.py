@@ -4,7 +4,13 @@ import ast
 from collections.abc import Sequence
 from pathlib import Path
 
-from sandbox.runner import ProjectProfile, SandboxConfig, TargetSymbol
+from sandbox.health import SandboxHealth, SandboxHealthFailure
+from sandbox.runner import (
+    EnforcementMode,
+    ProjectProfile,
+    SandboxConfig,
+    TargetSymbol,
+)
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "sample_project"
 
@@ -47,6 +53,24 @@ def make_root_profile(
         root=Path(root),
         test_paths=[Path(path) for path in test_paths],
         target_symbols=[],
+    )
+
+
+def sandbox_health(ready: bool = True) -> SandboxHealth:
+    """Stub health result for stage tests that must not execute pytest."""
+    return SandboxHealth(
+        ready=ready,
+        checked_at="2026-01-01T00:00:00+00:00",
+        elapsed_ms=1,
+        platform="test",
+        enforcement_mode=EnforcementMode.BEST_EFFORT,
+        double_run=True,
+        tests_reported=2,
+        strong_test_passed=ready,
+        strong_covers_target=ready,
+        weak_test_passed=ready,
+        failures=[] if ready else [SandboxHealthFailure.STRONG_TEST_FAILED],
+        details=[] if ready else ["strong probe test failed"],
     )
 
 

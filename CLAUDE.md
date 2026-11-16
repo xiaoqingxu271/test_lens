@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-TestLens is an early v1 repo. The validation infrastructure (sandbox runner, double-run flaky detection, mutation operators and scoring), deterministic target selection, and deterministic rule scan (R001–R005) are implemented; test generation, LLM stages, audit cross-check/reproduction/grading, the evaluation harness, CLI, README, and SQLite metadata are not. This file is the single source of truth for the v1 spec; the confirmed design decisions at the end are normative. Do not scaffold test generation or LLM calls before the remaining validation infrastructure exists (see Build order).
+TestLens is an early v1 repo. The validation infrastructure (sandbox runner, double-run flaky detection, mutation operators and scoring), deterministic target selection, deterministic rule scan (R001–R005), the LLM interface with a deterministic fake, sandbox-gated candidate test generation, and line-anchored audit triage are implemented; audit cross-check/reproduction/grading, the evaluation harness, CLI, README, and SQLite metadata are not. This file is the single source of truth for the v1 spec; the confirmed design decisions at the end are normative. Continue in Build order; do not add a real model client or an evaluation run before triage and review exist.
 
 Goal: for small Python web projects (FastAPI/Flask style with clear routes and function boundaries), an LLM only proposes candidates. Sandboxed execution, mutation scoring, and an independent false-positive review decide what survives; attribution explains every rejection.
 
@@ -20,11 +20,13 @@ Goal: for small Python web projects (FastAPI/Flask style with clear routes and f
 
 ## Source layout
 
-- `sandbox/` — `runner.py` (frozen execution report), `double_run.py` (flaky merge), `_pytest_plugin.py` (child-side test reporting and target-symbol coverage).
+- `sandbox/` — `runner.py` (frozen execution report), `double_run.py` (flaky merge), `health.py` (generation gate: acceptance probe), `_pytest_plugin.py` (child-side test reporting and target-symbol coverage).
 - `mutation/` — fixed AST operator set and mutation scoring.
 - `project/` — deterministic Python file discovery, parsing, and enumerated skip reasons.
 - `targets/` — AST route extraction and target-selection reports.
-- `audit/` — rule scan and R001–R005 handlers; `RuleCandidate` is an intermediate stage output, not a final `Finding`.
+- `audit/` — rule scan, R001–R005 handlers, and LLM triage; `RuleCandidate` and `TriageDraft` are intermediate stage outputs, not final `Finding`s.
+- `llm/` — provider-neutral request/response contracts, the `LLMClient` protocol, and the deterministic fake.
+- `generation/` — prompt construction, deterministic proposal validation, and `generate_tests`; emits candidates only and never executes or writes the target project.
 
 ## Build order (non-negotiable)
 
@@ -100,6 +102,29 @@ Rule IDs are used in reports and evaluation grouping. Adding a rule requires upd
 - Known R005 limits in v1: no `try/finally: close()` analysis, no `ExitStack.enter_context`, no `pathlib.Path.open`/`requests` detection, and `sqlite3.connect` under `with` is treated as managed even though that context manager commits/rolls back rather than closing. These are explicit false-positive/false-negative classes for the cross-check and evaluation fixtures.
 - `RuleScanTrace` records `files_scanned`, `files_skipped`, `candidates_found`, per-rule counts, `rules_run`, and elapsed time. `RuleCandidate` is not a final `Finding`: evidence levels, triage, cross-check, reproduction, and `AuditReport` remain later stages.
 
+### LLM interface and generation (v1)
+
+`llm/` is the only place model clients live. `LLMRequest` carries a deterministic `request_id`, purpose, prompt-template version, system/user prompt, seed, and temperature; `prompt_digest` is computed from template version + system + prompt. `LLMResponse` carries text, `model_id`, `model_kind` (`fake` / `real`), finish reason, usage, and a computed `response_digest`. `LLMClient` exposes only `model_kind`, `model_id`, and `complete(request)`. No real client or network call exists in v1; real-model runs must be labeled `ModelKind.REAL` in reports.
+
+- `DeterministicFakeLLM` resolves a registered response by `request_id` first, then falls back to a deterministic default responder; it never reads the clock, randomness, or the network. The default generation responder is a stand-in whose proposals are expected to be filtered later by the sandbox, mutation scoring, and attribution.
+- `generate_tests(profile, selection, llm, sandbox_health=None)` sends one request per `SelectedTarget` (`request_id = test_generation::<symbol_id>`) with template `generation-v1`, validates every proposal deterministically, and never writes project files or executes the project.
+- Rejection reasons (`GenerationRejectReason`): `EMPTY_RESPONSE`, `NO_PROPOSAL`, `INVALID_JSON`, `INVALID_SHAPE`, `SOURCE_UNREADABLE`, `INVALID_TEST_PATH`, `FILE_EXISTS`, `SYNTAX_ERROR`, `NO_TEST_FUNCTION`, `TARGET_MISMATCH`, `DUPLICATE_TEST_ID`. Rejected proposals are reported, never silently dropped.
+- An accepted candidate defines exactly one top-level test function matching `test_name`, uses a relative POSIX `test_*.py` / `*_test.py` path that does not collide with an existing file, parses with `ast`, and imports or references the target symbol. `test_id` is `<test_file>::<test_name>`. Target selection and ordering stay deterministic; the LLM never selects files or lines.
+- `GeneratedTest` is a candidate, not a kept test: sandbox execution, double-run, mutation scoring, and attribution decide survival.
+- Sandbox gate: `sandbox/health.py::check_sandbox_ready()` runs a strong and a weak test through the double-run executor in a temporary project. `SandboxHealth` records platform, enforcement mode, runner version, whether the strong test passed and entered the target symbol, whether both runs were present, and enumerated `SandboxHealthFailure` values. `generate_tests` raises `SandboxUnavailableError` unless the probe is ready.
+- `GenerationTrace` records model kind/id, template version, targets considered, tests proposed/accepted/rejected, rejections by reason, elapsed time, the sandbox health result, and warnings (including model identity mismatches).
+
+### LLM triage (v1)
+
+`audit/triage.py::llm_triage(profile, rule_scan_report, llm)` sends one request per `RuleCandidate` (`request_id = rule_triage::<finding_id>`) using template `triage-v1`. The prompt contains the candidate fields, its enclosing function source, and up to two context lines before and after; it does not receive prior reasoning. Triage may only complete `trigger_path` and restate `claim`.
+
+- File, rule id, and line span are copied from the deterministic candidate and validated for exact equality. A response that references another finding, changes the rule, or moves the anchor is rejected.
+- Accepted drafts have `source=RULE_WITH_LLM_TRIAGE` and retain the candidate's `finding_id`, `rule_id`, file, and line span. Candidates whose triage is rejected remain in the rule scan report with `source=RULE`; they are not silently upgraded.
+- Rejection reasons (`TriageRejectReason`): `EMPTY_RESPONSE`, `INVALID_JSON`, `INVALID_SHAPE`, `SOURCE_UNREADABLE`, `UNKNOWN_FINDING`, `RULE_MISMATCH`, `LINE_ANCHOR_MISMATCH`, `NO_TRIGGER_PATH`, `EMPTY_CLAIM`.
+- `TriageDraft` carries `finding_id`, `rule_id`, `source`, `file`, `line_start`, `line_end`, `claim`, `trigger_path`, prompt/response digests, template version, and model identity.
+- `TriageTrace` records model kind/id, template version, candidates considered, drafts accepted/rejected, rejections by reason, elapsed time, and warnings.
+- Triage is not a final finding: cross-check, reproduction, and evidence grading remain later stages. `LLM_INDEPENDENT` is still not emitted.
+
 ## Evaluation baseline
 
 - Two vendored minimal fixture projects (one FastAPI, one Flask), with pinned dependencies, offline execution, known defects, and known false positives. Real OSS projects are optional, pinned by commit, and are not the deterministic baseline.
@@ -136,6 +161,8 @@ Development happens on Windows (Git Bash). `resource` is POSIX-only. POSIX enfor
 - Run the suite: `python -m pytest`
 - Run one file: `python -m pytest tests/test_mutation_score.py`
 - Run target selection or rule scan: `python -m pytest tests/test_target_selection.py`, `python -m pytest tests/test_rule_scan.py`
+- Run generation: `python -m pytest tests/test_generation.py`; sandbox gate: `python -m pytest tests/test_sandbox_health.py`
+- Run audit triage: `python -m pytest tests/test_triage.py`
 - Run one test: `python -m pytest tests/test_runner.py::test_runner_strong_passes_and_covers_target`
 
 Tests invoke pytest inside a sandbox subprocess against `tests/fixtures/sample_project`; the fixture tests are excluded from the outer collection. The README is still pending and must state that production isolation uses containers even though v1 uses `subprocess` + resource limits.
