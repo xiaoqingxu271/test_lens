@@ -280,6 +280,19 @@ def test_unsupported_transcript_version_is_invalid(tmp_path):
     )
 
 
+def test_recording_model_id_must_match_the_transcript(tmp_path):
+    path = tmp_path / "transcript.json"
+    _record(path, [_request()], ['{"tests": []}'])
+    payload = _payload(path)
+    payload["recordings"][0]["model_id"] = "other-model"
+    _rewrite(path, payload)
+
+    with pytest.raises(TranscriptError) as excinfo:
+        load_transcript(path)
+
+    assert excinfo.value.transcript_reason is TranscriptErrorReason.INVALID
+
+
 def test_expected_model_mismatch_is_rejected(tmp_path):
     path = tmp_path / "transcript.json"
     _record(path, [_request()], ['{"tests": []}'])

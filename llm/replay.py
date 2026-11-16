@@ -118,6 +118,13 @@ def load_transcript(
                 TranscriptErrorReason.INVALID,
                 f"recording {recording.request_id!r} is not a real response",
             )
+        if recording.model_id != transcript.model_id:
+            raise TranscriptError(
+                TranscriptErrorReason.INVALID,
+                f"recording {recording.request_id!r} model id "
+                f"{recording.model_id!r} does not match transcript model "
+                f"{transcript.model_id!r}",
+            )
         if digest_text(recording.text) != recording.response_digest:
             raise ReplayError(
                 ReplayErrorReason.RESPONSE_DIGEST_MISMATCH,

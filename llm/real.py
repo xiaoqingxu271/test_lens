@@ -38,7 +38,7 @@ class RealLLMConfig(BaseModel):
     api_key_env: str = API_KEY_ENV
     base_url: str | None = None
     timeout_seconds: float = 60.0
-    max_attempts: int = Field(3, ge=1)
+    max_attempts: int = Field(3, ge=1, le=3)
     max_output_tokens: int | None = None
     temperature: float = 0.0
 

@@ -253,6 +253,28 @@ def test_cli_rejects_model_option_misuse(tmp_path, capsys):
     )
 
 
+def test_proposals_are_rejected_outside_fake_mode(tmp_path, capsys):
+    project = _project(tmp_path)
+    transcript = _empty_transcript(tmp_path)
+    proposals = _proposals(tmp_path)
+
+    exit_code = cli.main(
+        [
+            "tests",
+            str(project),
+            "--llm",
+            "replay",
+            "--transcript",
+            str(transcript),
+            "--proposals",
+            str(proposals),
+        ]
+    )
+
+    assert exit_code == 2
+    assert "--proposals requires --llm fake" in capsys.readouterr().err
+
+
 def test_replay_without_a_recording_exits_with_the_model_code(tmp_path, capsys):
     transcript = _empty_transcript(tmp_path)
 

@@ -324,9 +324,11 @@ def test_read_api_key_reports_auth_without_leaking_the_value(monkeypatch):
     assert excinfo.value.reason is LLMErrorReason.AUTH
 
 
-def test_configuration_rejects_zero_attempts():
+def test_configuration_rejects_out_of_range_attempts():
     with pytest.raises(ValueError):
         RealLLMConfig(model_id="model-x", max_attempts=0)
+    with pytest.raises(ValueError):
+        RealLLMConfig(model_id="model-x", max_attempts=4)
 
 
 def test_fake_clients_never_open_sockets(monkeypatch):

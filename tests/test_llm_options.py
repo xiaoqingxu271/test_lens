@@ -190,9 +190,24 @@ def test_fake_factory_creates_a_new_fake_per_fixture():
     assert first.model_kind is ModelKind.FAKE
 
 
-def test_replay_factory_shares_one_client(tmp_path):
+def test_replay_factory_shares_one_inner_client_but_resets_budgets(tmp_path):
     path = _transcript(tmp_path)
-    options = options_from_args(_parse("--llm", "replay", "--transcript", str(path)))
+    options = options_from_args(
+        _parse(
+            "--llm",
+            "replay",
+            "--transcript",
+            str(path),
+            "--max-calls",
+            "1",
+        )
+    )
     factory = build_llm_factory(options)
 
-    assert factory(None) is factory(None)
+    first = factory(None)
+    second = factory(None)
+
+    assert first is not second
+    assert first._inner is second._inner
+    assert first.complete(_request("test_generation::a")).text == "recorded"
+    assert second.complete(_request("test_generation::a")).text == "recorded"

@@ -121,20 +121,13 @@ def _budget(options: LLMOptions) -> LLMBudget:
     )
 
 
-def build_llm(
-    options: LLMOptions,
-    responses: Mapping[str, str] | None = None,
-):
-    if options.mode is LLMMode.FAKE:
-        return DeterministicFakeLLM(responses)
+def _inner_llm(options: LLMOptions):
+    """The unbudgeted client; budget wrappers are per stage invocation."""
     if options.mode is LLMMode.REPLAY:
         assert options.transcript is not None
-        return BudgetedLLM(
-            ReplayLLM(
-                options.transcript,
-                expected_model_id=options.model_id,
-            ),
-            _budget(options),
+        return ReplayLLM(
+            options.transcript,
+            expected_model_id=options.model_id,
         )
 
     assert options.model_id is not None
@@ -148,17 +141,27 @@ def build_llm(
     inner = RealLLM(config)
     if options.record_to is not None:
         inner = RecordingLLM(inner, options.record_to)
-    return BudgetedLLM(inner, _budget(options))
+    return inner
+
+
+def build_llm(
+    options: LLMOptions,
+    responses: Mapping[str, str] | None = None,
+):
+    if options.mode is LLMMode.FAKE:
+        return DeterministicFakeLLM(responses)
+    return BudgetedLLM(_inner_llm(options), _budget(options))
 
 
 def build_llm_factory(options: LLMOptions):
     """Return a factory used by the evaluation harness.
 
     Fake mode needs per-fixture registered responses, so it builds a new fake
-    each time. Replay and real modes share one client for the whole run, which
-    also gives recording a single transcript to append to.
+    each time. Replay and real modes share one inner client for the whole run
+    (recording appends to one transcript, replay validates against one
+    transcript) while each stage invocation gets a fresh budget wrapper.
     """
     if options.mode is LLMMode.FAKE:
         return lambda responses=None: DeterministicFakeLLM(responses)
-    client = build_llm(options)
-    return lambda responses=None: client
+    inner = _inner_llm(options)
+    return lambda responses=None: BudgetedLLM(inner, _budget(options))

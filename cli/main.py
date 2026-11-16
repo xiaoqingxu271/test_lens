@@ -24,6 +24,7 @@ from evaluation.run import run_evaluation
 from generation.generate import SandboxUnavailableError, generate_tests
 from llm.errors import LLMError
 from llm.options import (
+    LLMMode,
     add_llm_arguments,
     build_llm,
     build_llm_factory,
@@ -187,6 +188,8 @@ def _tests(args) -> int:
         else None
     )
     options = options_from_args(args)
+    if args.proposals and options.mode is not LLMMode.FAKE:
+        raise ValueError("--proposals requires --llm fake")
     llm = build_llm(options, responses)
     generation = generate_tests(
         profile,
