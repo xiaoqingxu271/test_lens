@@ -7,7 +7,8 @@ cross-check decide what survives. Every rejection carries an enumerated reason.
 
 Version 2.0.0 adds two opt-in layers on top of the deterministic v1 baseline:
 a container sandbox backend (Linux/Docker) and a real-model/replay client layer.
-The deterministic fake remains the default, and the evaluation baseline stays
+The 2C increment adds opt-in LLM-independent semantic audit claims. The
+deterministic fake remains the default, and the evaluation baseline stays
 offline.
 
 Two pipelines share one discipline: **candidate → verification → attribution →
@@ -130,12 +131,16 @@ flaky, not fixed.
 ## Audit pipeline
 
 ```
-rule_scan -> llm_triage -> cross_check -> sandbox_repro -> grade_and_emit
+rule_scan -> [independent_scan] -> llm_triage -> cross_check
+  -> sandbox_repro -> grade_and_emit
 ```
 
 - `rule_scan` is deterministic: R001 mutable defaults, R002 local `None`
   dereference, R003 unreachable code, R004 bare `except`, R005 resource opened
   without `with`.
+- `independent_scan` is opt-in. It asks the model for semantic claims outside
+  R001–R005, then anchors each claim deterministically from a verbatim source
+  quote. The model never supplies files, line numbers, rule ids, or verdicts.
 - Triage may only complete a trigger path and restate the claim. It cannot move
   a line anchor or change a rule.
 - Cross-check runs the deterministic rule again and requires the same span. An
@@ -147,6 +152,33 @@ rule_scan -> llm_triage -> cross_check -> sandbox_repro -> grade_and_emit
   sandbox repro, `STATIC_CONFIRMED` requires rule confirmation or structured
   reviewer evidence, and otherwise the finding is `SUSPICIOUS` and folded.
   Refuted and unverifiable claims are retracted with a `RetractReason`.
+
+### LLM-independent claims (2C)
+
+```bash
+testlens audit path/to/project \
+  --independent \
+  --proposals independent_proposals.json
+```
+
+`--independent` scans module-level functions and asks the model for claims in a
+closed set of kinds: `MISSING_INPUT_VALIDATION`, `UNSAFE_SINK`,
+`SWALLOWED_ERROR`, `RESOURCE_LIFECYCLE`, and `INCONSISTENT_STATE`. Each claim
+must quote the source verbatim; the stage resolves the quote to exactly one
+span inside the requested function. Zero matches, multiple matches, an unknown
+kind, or an overlong quote is rejected with an enumerated reason.
+
+A claim whose span overlaps a deterministic rule candidate is rejected as
+`DUPLICATE_OF_RULE`; duplicate anchors are rejected as `DUPLICATE_CLAIM`.
+Independent findings (`source=LLM_INDEPENDENT`, `rule_id=None`) still need
+structured cross-check evidence: they cap at `STATIC_CONFIRMED`, are never
+`REPRODUCED`, and are never folded as `SUSPICIOUS` — a claim either has evidence
+or is retracted. The deterministic reviewer no longer auto-passes semantic
+claims, and the default fake proposes none.
+
+`testlens eval --independent` reports rule and independent precision/recall
+separately and requires fixtures with `llm_independent` labels. The rule-only
+baseline is unchanged.
 
 ## Determinism and models
 
@@ -208,7 +240,9 @@ The vendored fixtures ship inside the `evaluation` package:
 Each is self-contained and offline; decorators use local stubs, so no framework
 installation or network access is needed. `labels.json` records expected
 defects, known false positives, and known false negatives by exact source
-marker. `proposals.json` supplies fixed fake proposals.
+marker. `proposals.json` supplies fixed fake proposals; a fixture with
+independent labels may also add `independent_proposals.json` for
+`llm_independent::<file>::<function>` requests.
 
 `python -m evaluation` writes `report.json`, `calibration.json`, and
 `summary.md` under the timestamped directory `eval/reports/<timestamp>/`
@@ -245,7 +279,11 @@ state `best-effort`.
 
 ## Known limitations
 
-- Reproduction templates exist only for R001.
+- Reproduction templates exist only for R001. Independent (2C) claims are
+  static-only: they can reach `STATIC_CONFIRMED` but never `REPRODUCED`, and
+  scanning covers module-level functions only.
+- Independent claim anchoring requires a verbatim quote that occurs exactly
+  once in the function; paraphrased or ambiguous quotes are rejected.
 - The mutation operator set has 14 fixed operators; equivalent mutants are not
   detected, so observed kill rates are a lower bound.
 - R005 has explicit v1 gaps: no `pathlib.Path.open`/`requests` detection, no

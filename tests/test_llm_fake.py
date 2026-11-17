@@ -100,6 +100,18 @@ def test_default_responder_calls_zero_argument_handlers():
     assert "    status()" in payload["tests"][0]["source"]
 
 
+def test_independent_purpose_defaults_to_no_claims():
+    response = DeterministicFakeLLM().complete(
+        _request(
+            purpose=LLMPurpose.LLM_INDEPENDENT,
+            request_id="llm_independent::app.py::read_item",
+        )
+    )
+
+    assert json.loads(response.text) == {"claims": []}
+    assert response.finish_reason == FinishReason.STOP
+
+
 def test_unsupported_purpose_returns_empty_completion():
     response = DeterministicFakeLLM().complete(
         _request(purpose=LLMPurpose.RULE_TRIAGE)

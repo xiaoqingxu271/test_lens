@@ -46,15 +46,33 @@ def _label(root: Path, raw: object) -> Label:
     if not isinstance(raw, dict):
         raise FixtureError("each label must be an object")
     relative_file = raw.get("file")
-    rule_id = raw.get("rule_id")
     marker = raw.get("marker")
-    if not all(isinstance(value, str) for value in (relative_file, rule_id, marker)):
-        raise FixtureError("label requires string file, rule_id, and marker")
+    source = raw.get("source", "rule")
+    if not isinstance(relative_file, str) or not isinstance(marker, str):
+        raise FixtureError("label requires string file and marker")
+    if source not in {"rule", "llm_independent"}:
+        raise FixtureError(f"unsupported label source: {source!r}")
+
+    rule_id = raw.get("rule_id")
+    claim_kind = raw.get("claim_kind")
+    if source == "rule":
+        if not isinstance(rule_id, str):
+            raise FixtureError("rule labels require a string rule_id")
+        claim_kind = None
+    else:
+        if not isinstance(claim_kind, str):
+            raise FixtureError(
+                "llm_independent labels require a string claim_kind"
+            )
+        rule_id = None
+
     return Label(
         file=relative_file,
         rule_id=rule_id,
         marker=marker,
         line=_resolve_marker(root, relative_file, marker),
+        source=source,
+        claim_kind=claim_kind,
         case=raw.get("case") if isinstance(raw.get("case"), str) else None,
         retract_reason=(
             raw.get("retract_reason")
@@ -101,6 +119,18 @@ def load_proposals_file(path: Path) -> dict[str, str]:
 
 def load_proposals(root: Path) -> dict[str, str]:
     return load_proposals_file(root / "proposals.json")
+
+
+def load_independent_proposals(root: Path) -> dict[str, str] | None:
+    """Optional fixed independent-claim responses for a fixture.
+
+    The default fake returns zero independent claims, so an independent
+    evaluation fixture must seed them explicitly.
+    """
+    path = root / "independent_proposals.json"
+    if not path.is_file():
+        return None
+    return load_proposals_file(path)
 
 
 def fixture_roots(root: Path) -> list[Path]:

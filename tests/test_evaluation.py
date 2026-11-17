@@ -3,8 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from audit.models import (
     AuditReport,
+    ClaimKind,
     EvidenceLevel,
     Finding,
     FindingSource,
@@ -13,7 +16,12 @@ from audit.models import (
     RetractReason,
     RuleId,
 )
-from evaluation.labels import fixture_roots, load_labels, load_proposals
+from evaluation.labels import (
+    FixtureError,
+    fixture_roots,
+    load_labels,
+    load_proposals,
+)
 from evaluation.metrics import calibration_rows, summarize_audit_side
 from evaluation.models import (
     EvaluationLabels,
@@ -347,6 +355,167 @@ def test_evaluation_writes_reports_and_is_deterministic(tmp_path):
 
     assert _stable(first) == _stable(second)
     assert first.output_dir != second.output_dir
+
+
+def _independent_finding(
+    line: int,
+    claim_kind: ClaimKind = ClaimKind.MISSING_INPUT_VALIDATION,
+) -> Finding:
+    return Finding(
+        finding_id=f"i{line}",
+        file="app.py",
+        line_start=line,
+        line_end=line,
+        rule_id=None,
+        llm_finding_id=None,
+        source=FindingSource.LLM_INDEPENDENT,
+        title=f"{claim_kind.value}: handler",
+        evidence_level=EvidenceLevel.STATIC_CONFIRMED,
+        claim="semantic claim",
+        claim_kind=claim_kind,
+    )
+
+
+def test_audit_metrics_keep_rule_and_independent_precision_separate():
+    labels = EvaluationLabels(
+        project="project",
+        defects=[
+            Label(
+                file="app.py",
+                rule_id=RuleId.R001_MUTABLE_DEFAULT.value,
+                marker="def f(items=[]):",
+                line=10,
+            ),
+            Label(
+                file="app.py",
+                marker="return int(limit)",
+                line=20,
+                source="llm_independent",
+                claim_kind=ClaimKind.MISSING_INPUT_VALIDATION.value,
+            ),
+        ],
+    )
+    report = AuditReport(
+        findings=[
+            _finding(10, RuleId.R001_MUTABLE_DEFAULT),
+            _independent_finding(20),
+            _independent_finding(40),
+        ],
+        trace=GradingTrace(
+            started_at=TIMESTAMP,
+            elapsed_ms=0,
+            candidates_considered=1,
+            findings_emitted=3,
+            independent_candidates_considered=2,
+            independent_findings_emitted=2,
+            evidence_level_counts={EvidenceLevel.STATIC_CONFIRMED: 3},
+        ),
+    )
+
+    summary = summarize_audit_side(report, labels)
+
+    assert summary.findings_emitted == 3
+    assert summary.rule_findings_emitted == 1
+    assert summary.precision == 1.0
+    assert summary.defects_found == 2
+    assert summary.recall == 1.0
+    assert summary.independent_candidates == 2
+    assert summary.independent_findings == 2
+    assert summary.independent_true_positives == 1
+    assert summary.independent_false_positives == 1
+    assert summary.independent_precision == 0.5
+    assert summary.independent_recall == 1.0
+    kinds = [item.claim_kind for item in summary.findings]
+    assert sorted(kind for kind in kinds if kind) == [
+        ClaimKind.MISSING_INPUT_VALIDATION.value,
+        ClaimKind.MISSING_INPUT_VALIDATION.value,
+    ]
+
+
+def _independent_fixture(root: Path) -> Path:
+    project = root / "independent_fixture"
+    project.mkdir(parents=True)
+    (project / "app.py").write_text(
+        """\
+def read_limit(limit):
+    return int(limit) + 1
+
+
+def other(value):
+    return value
+""",
+        encoding="utf-8",
+    )
+    (project / "labels.json").write_text(
+        json.dumps(
+            {
+                "project": "independent_fixture",
+                "defects": [
+                    {
+                        "file": "app.py",
+                        "source": "llm_independent",
+                        "claim_kind": "MISSING_INPUT_VALIDATION",
+                        "marker": "return int(limit) + 1",
+                    }
+                ],
+                "false_positives": [],
+                "false_negatives": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (project / "proposals.json").write_text("{}\n", encoding="utf-8")
+    (project / "independent_proposals.json").write_text(
+        json.dumps(
+            {
+                "llm_independent::app.py::read_limit": {
+                    "claims": [
+                        {
+                            "claim_kind": "MISSING_INPUT_VALIDATION",
+                            "quote": "return int(limit) + 1",
+                            "claim": "limit is converted without validation",
+                            "trigger_path": ["read_limit parameter", "int call"],
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    return project
+
+
+def test_evaluation_independent_mode_reports_separate_metrics(tmp_path):
+    project = _independent_fixture(tmp_path)
+
+    report = run_evaluation([project], write=False, independent=True)
+
+    assert report.trace.independent is True
+    fixture = report.fixtures[0]
+    assert fixture.project == "independent_fixture"
+    audit = fixture.audit
+    assert audit.rule_findings_emitted == 0
+    assert audit.precision is None
+    assert audit.independent_candidates == 1
+    assert audit.independent_findings == 1
+    assert audit.independent_true_positives == 1
+    assert audit.independent_false_positives == 0
+    assert audit.independent_precision == 1.0
+    assert audit.independent_recall == 1.0
+    assert audit.independent_retracted == 0
+    assert audit.defects_found == 1
+    assert audit.findings[0].source == FindingSource.LLM_INDEPENDENT.value
+    assert (
+        audit.findings[0].claim_kind
+        == ClaimKind.MISSING_INPUT_VALIDATION.value
+    )
+
+
+def test_evaluation_requires_independent_labels(tmp_path):
+    project = _tiny_fixture(tmp_path)
+
+    with pytest.raises(FixtureError, match="llm_independent labels"):
+        run_evaluation([project], write=False, independent=True)
 
 
 def test_evaluation_module_cli_requires_an_image_for_containers(monkeypatch):

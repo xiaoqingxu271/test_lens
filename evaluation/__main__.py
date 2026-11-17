@@ -70,6 +70,11 @@ def main(argv: list[str] | None = None) -> int:
         help="run and print metrics without writing a report",
     )
     parser.add_argument(
+        "--independent",
+        action="store_true",
+        help="enable LLM-independent claims (requires fixture labels)",
+    )
+    parser.add_argument(
         "--sandbox-backend",
         choices=[item.value for item in SandboxBackend],
         default=SandboxBackend.SUBPROCESS.value,
@@ -99,6 +104,7 @@ def main(argv: list[str] | None = None) -> int:
             threshold=args.threshold,
             seed=args.seed,
             write=not args.no_write,
+            independent=args.independent,
             sandbox_config=config,
             llm_factory=build_llm_factory(llm_options),
         )

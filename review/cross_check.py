@@ -16,7 +16,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from audit.models import RuleScanReport, TriageDraft, TriageReport
+from audit.models import (
+    FindingSource,
+    IndependentReport,
+    RuleScanReport,
+    TriageDraft,
+    TriageReport,
+)
 from sandbox.runner import ProjectProfile
 
 from .base import ClaimReviewer
@@ -96,6 +102,25 @@ def subjects_from_candidates(
                 )
             )
     return subjects
+
+
+def subjects_from_independent_claims(
+    report: IndependentReport,
+) -> list[CrossCheckSubject]:
+    """One semantic subject per accepted claim; rules are not involved."""
+    return [
+        CrossCheckSubject(
+            finding_id=claim.finding_id,
+            rule_id=None,
+            source=FindingSource.LLM_INDEPENDENT,
+            file=claim.file,
+            line_start=claim.line_start,
+            line_end=claim.line_end,
+            claim=claim.claim,
+            trigger_path=list(claim.trigger_path),
+        )
+        for claim in report.claims
+    ]
 
 
 def _unverifiable(reason: RetractReason) -> ReviewerVerdict:

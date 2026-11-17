@@ -149,7 +149,7 @@ def test_rule_reviewer_refutes_a_stale_anchor():
     assert "no longer matches" in evidence.explanation
 
 
-def test_semantic_claim_goes_to_the_independent_reviewer():
+def test_semantic_claim_requires_an_explicit_verdict():
     profile, scan, _ = _setup()
     span = line_of(DEFECTS, "return x.value", after="def none_deref")
     subject = _semantic_subject(span)
@@ -158,14 +158,16 @@ def test_semantic_claim_goes_to_the_independent_reviewer():
     report = cross_check(profile, scan, [subject], reviewer)
 
     result = report.results[0]
-    assert result.verdict == ReviewVerdict.PASS
+    assert result.verdict == ReviewVerdict.UNVERIFIABLE
+    assert result.retract_reason == RetractReason.UNVERIFIABLE_CLAIM
     assert result.reviewer_kind == ReviewerKind.FAKE
     assert result.reviewer_id == reviewer.reviewer_id
     assert result.checked_rule_ids == []
     assert result.claim_hash == claim_hash(subject.claim)
+    assert result.evidence_lines == []
     assert report.trace.rule_checks == 0
     assert report.trace.model_reviews == 1
-    assert report.trace.verdict_counts == {ReviewVerdict.PASS: 1}
+    assert report.trace.verdict_counts == {ReviewVerdict.UNVERIFIABLE: 1}
 
     assert len(reviewer.requests) == 1
     request = reviewer.requests[0]
@@ -174,10 +176,37 @@ def test_semantic_claim_goes_to_the_independent_reviewer():
     assert request.context.enclosing_function is not None
     assert request.context.enclosing_function.name == "none_deref"
 
-    evidence = result.evidence_lines[0]
-    assert evidence.evidence_kind == EvidenceKind.DATA_FLOW
-    assert evidence.role == EvidenceRole.SUPPORTS
-    assert evidence.line_start == span
+
+def test_registered_semantic_pass_keeps_anchored_evidence():
+    profile, scan, _ = _setup()
+    span = line_of(DEFECTS, "return x.value", after="def none_deref")
+    subject = _semantic_subject(span)
+    source, error = load_review_source(REVIEW_ROOT, "defects.py")
+    assert source is not None and error is None
+    evidence = make_evidence(
+        source,
+        span,
+        span,
+        kind=EvidenceKind.DATA_FLOW,
+        role=EvidenceRole.SUPPORTS,
+        explanation="the dereference follows an explicit None assignment",
+    )
+    verdict = ReviewerVerdict(
+        verdict=ReviewVerdict.PASS, evidence_lines=[evidence]
+    )
+
+    report = cross_check(
+        profile,
+        scan,
+        [subject],
+        DeterministicReviewer({"semantic-none": verdict}),
+    )
+
+    result = report.results[0]
+    assert result.verdict == ReviewVerdict.PASS
+    assert result.evidence_lines[0].line_start == span
+    assert result.evidence_lines[0].role == EvidenceRole.SUPPORTS
+    assert result.evidence_lines[0].evidence_kind == EvidenceKind.DATA_FLOW
 
 
 def test_independent_reviewer_refutes_with_anchored_evidence():

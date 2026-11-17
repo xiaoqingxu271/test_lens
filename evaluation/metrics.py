@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from audit.models import AuditReport, Finding, Retracted
+from audit.models import AuditReport, Finding, FindingSource, Retracted
 from mutation.score import OPERATOR_SET_VERSION
 from pipeline.models import DiscardReason, TestReport
 
@@ -19,23 +19,31 @@ from .models import (
 )
 
 
+def _is_independent(finding: Finding) -> bool:
+    return finding.source == FindingSource.LLM_INDEPENDENT
+
+
 def _finding_matches(finding: Finding, label: Label) -> bool:
     if finding.file != label.file:
         return False
-    if finding.rule_id is None or finding.rule_id.value != label.rule_id:
-        return False
+    if label.source == "llm_independent":
+        if not _is_independent(finding):
+            return False
+        if (
+            finding.claim_kind is None
+            or finding.claim_kind.value != label.claim_kind
+        ):
+            return False
+    else:
+        if _is_independent(finding):
+            return False
+        if finding.rule_id is None or finding.rule_id.value != label.rule_id:
+            return False
     return finding.line_start <= label.line <= finding.line_end
 
 
 def _retracted_matches(item: Retracted, label: Label) -> bool:
-    if item.finding.file != label.file:
-        return False
-    if (
-        item.finding.rule_id is None
-        or item.finding.rule_id.value != label.rule_id
-    ):
-        return False
-    if not (item.finding.line_start <= label.line <= item.finding.line_end):
+    if not _finding_matches(item.finding, label):
         return False
     if label.retract_reason is None:
         return True
@@ -101,15 +109,43 @@ def summarize_audit_side(
     report: AuditReport, labels: EvaluationLabels
 ) -> AuditSideEvaluation:
     findings = report.findings
-    matched = [any(_finding_matches(item, label) for label in labels.defects) for item in findings]
-    true_positives = sum(1 for value in matched if value)
-    false_positives = len(findings) - true_positives
+    rule_findings = [item for item in findings if not _is_independent(item)]
+    independent_findings = [item for item in findings if _is_independent(item)]
+    rule_defects = [
+        label for label in labels.defects if label.source == "rule"
+    ]
+    independent_defects = [
+        label for label in labels.defects if label.source == "llm_independent"
+    ]
 
-    defects_found = sum(
+    true_positives = sum(
         1
-        for label in labels.defects
-        if any(_finding_matches(item, label) for item in findings)
+        for item in rule_findings
+        if any(_finding_matches(item, label) for label in rule_defects)
     )
+    false_positives = len(rule_findings) - true_positives
+    independent_true_positives = sum(
+        1
+        for item in independent_findings
+        if any(
+            _finding_matches(item, label) for label in independent_defects
+        )
+    )
+    independent_false_positives = (
+        len(independent_findings) - independent_true_positives
+    )
+
+    rule_defects_found = sum(
+        1
+        for label in rule_defects
+        if any(_finding_matches(item, label) for item in rule_findings)
+    )
+    independent_defects_found = sum(
+        1
+        for label in independent_defects
+        if any(_finding_matches(item, label) for item in independent_findings)
+    )
+    defects_found = rule_defects_found + independent_defects_found
     false_positives_retracted = sum(
         1
         for label in labels.false_positives
@@ -129,21 +165,24 @@ def summarize_audit_side(
                 *labels.false_positives,
                 *labels.false_negatives,
             ]
+            if label.rule_id is not None
         }
     )
     per_rule: list[RuleEvaluation] = []
     for rule_id in rules:
-        rule_findings = [
+        rule_hits = [
             item
             for item in findings
             if item.rule_id is not None and item.rule_id.value == rule_id
         ]
         rule_labels = [
-            label for label in labels.defects if label.rule_id == rule_id
+            label
+            for label in labels.defects
+            if label.source == "rule" and label.rule_id == rule_id
         ]
         rule_tp = sum(
             1
-            for item in rule_findings
+            for item in rule_hits
             if any(_finding_matches(item, label) for label in rule_labels)
         )
         per_rule.append(
@@ -155,9 +194,9 @@ def summarize_audit_side(
                     for label in rule_labels
                     if any(_finding_matches(item, label) for item in findings)
                 ),
-                emitted_findings=len(rule_findings),
+                emitted_findings=len(rule_hits),
                 true_positives=rule_tp,
-                false_positives=len(rule_findings) - rule_tp,
+                false_positives=len(rule_hits) - rule_tp,
             )
         )
 
@@ -167,6 +206,9 @@ def summarize_audit_side(
             line_start=item.line_start,
             line_end=item.line_end,
             rule_id=item.rule_id.value if item.rule_id is not None else None,
+            claim_kind=(
+                item.claim_kind.value if item.claim_kind is not None else None
+            ),
             source=item.source.value,
             evidence_level=item.evidence_level.value,
         )
@@ -191,7 +233,25 @@ def summarize_audit_side(
         ),
         true_positives=true_positives,
         false_positives=false_positives,
-        precision=(true_positives / len(findings) if findings else None),
+        precision=(
+            true_positives / len(rule_findings) if rule_findings else None
+        ),
+        rule_findings_emitted=len(rule_findings),
+        independent_candidates=report.trace.independent_candidates_considered,
+        independent_findings=len(independent_findings),
+        independent_true_positives=independent_true_positives,
+        independent_false_positives=independent_false_positives,
+        independent_precision=(
+            independent_true_positives / len(independent_findings)
+            if independent_findings
+            else None
+        ),
+        independent_recall=(
+            independent_defects_found / len(independent_defects)
+            if independent_defects
+            else None
+        ),
+        independent_retracted=report.trace.independent_retracted,
         false_positive_labels=len(labels.false_positives),
         false_positives_retracted=false_positives_retracted,
         false_negative_labels=len(labels.false_negatives),

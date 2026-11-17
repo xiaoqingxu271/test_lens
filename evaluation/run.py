@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from audit.grade import grade_and_emit
+from audit.independent import scan_independent
 from audit.repro import run_repro
 from audit.rule_scan import scan_rules
 from audit.triage import llm_triage
@@ -29,14 +30,31 @@ from llm.fake import FAKE_MODEL_ID, DeterministicFakeLLM
 from llm.models import LLMCallStats, ModelKind
 from pipeline.models import TestReport
 from pipeline.run import run_test_pipeline
-from review.cross_check import cross_check, subjects_from_candidates
+from review.cross_check import (
+    cross_check,
+    subjects_from_candidates,
+    subjects_from_independent_claims,
+)
 from review.fake import DeterministicReviewer
+from review.models import (
+    EvidenceKind,
+    EvidenceRole,
+    ReviewerVerdict,
+    ReviewVerdict,
+)
+from review.source import load_review_source, make_evidence
 from sandbox import runner
 from sandbox.health import SandboxHealth, check_sandbox_ready
 from sandbox.runner import ProjectProfile, SandboxConfig
 from targets.selection import select_targets
 
-from .labels import FixtureError, fixture_roots, load_labels, load_proposals
+from .labels import (
+    FixtureError,
+    fixture_roots,
+    load_independent_proposals,
+    load_labels,
+    load_proposals,
+)
 from .metrics import calibration_rows, summarize_audit_side, summarize_test_side
 from .models import (
     CalibrationRow,
@@ -55,6 +73,78 @@ def default_reports_root() -> Path:
     return Path.cwd() / "eval" / "reports"
 
 
+def _fixture_reviewer(
+    root: Path,
+    labels: EvaluationLabels,
+    independent,
+) -> DeterministicReviewer:
+    """Register explicit fixture verdicts for independent semantic claims.
+
+    Unmatched claims stay unregistered and are therefore retracted as
+    unverifiable by the deterministic reviewer. This keeps the fake reviewer
+    from auto-passing semantic claims while still exercising the full
+    cross-check and grading path offline.
+    """
+    if independent is None:
+        return DeterministicReviewer()
+    reviews = {
+        label.file: load_review_source(root, label.file)[0]
+        for label in [
+            *labels.defects,
+            *labels.false_positives,
+        ]
+        if label.source == "llm_independent"
+    }
+    verdicts: dict[str, ReviewerVerdict] = {}
+    defect_labels = [
+        label
+        for label in labels.defects
+        if label.source == "llm_independent"
+    ]
+    false_positive_labels = [
+        label
+        for label in labels.false_positives
+        if label.source == "llm_independent"
+    ]
+    for claim in independent.claims:
+        source = reviews.get(claim.file)
+        if source is None:
+            continue
+
+        def matches(label) -> bool:
+            return (
+                label.file == claim.file
+                and label.claim_kind == claim.claim_kind.value
+                and claim.line_start <= label.line <= claim.line_end
+            )
+
+        if any(matches(label) for label in defect_labels):
+            evidence = make_evidence(
+                source,
+                claim.line_start,
+                claim.line_end,
+                kind=EvidenceKind.DATA_FLOW,
+                role=EvidenceRole.SUPPORTS,
+                explanation="fixture label marks this semantic defect",
+            )
+            verdicts[claim.finding_id] = ReviewerVerdict(
+                verdict=ReviewVerdict.PASS, evidence_lines=[evidence]
+            )
+        elif any(matches(label) for label in false_positive_labels):
+            evidence = make_evidence(
+                source,
+                claim.line_start,
+                claim.line_end,
+                kind=EvidenceKind.DATA_FLOW,
+                role=EvidenceRole.REFUTES,
+                explanation="fixture label marks this semantic claim as false",
+            )
+            verdicts[claim.finding_id] = ReviewerVerdict(
+                verdict=ReviewVerdict.REFUTE, evidence_lines=[evidence]
+            )
+    return DeterministicReviewer(verdicts)
+
+
 def _evaluate_fixture(
     root: Path,
     labels: EvaluationLabels,
@@ -65,6 +155,7 @@ def _evaluate_fixture(
     config: SandboxConfig,
     warnings: set[str],
     llm_factory: Callable[[Mapping[str, str] | None], LLMClient],
+    independent: bool = False,
 ) -> tuple[FixtureEvaluation, TestReport, LLMCallStats]:
     profile = ProjectProfile(
         profile_id=root.name,
@@ -99,16 +190,35 @@ def _evaluate_fixture(
         raise ValueError("evaluation reports require double_run=true")
 
     scan = scan_rules(profile)
+    independent_report = (
+        scan_independent(
+            profile,
+            scan,
+            llm_factory(load_independent_proposals(root)),
+        )
+        if independent
+        else None
+    )
+    if independent_report is not None and independent_report.rejected:
+        warnings.add(
+            f"{root.name}: {len(independent_report.rejected)} independent "
+            "claims rejected"
+        )
     triage = llm_triage(profile, scan, llm_factory(None))
     if triage.rejected:
         warnings.add(
             f"{root.name}: {len(triage.rejected)} triage drafts rejected"
         )
+    subjects = subjects_from_candidates(scan, triage)
+    if independent_report is not None:
+        subjects = subjects + subjects_from_independent_claims(
+            independent_report
+        )
     review = cross_check(
         profile,
         scan,
-        subjects_from_candidates(scan, triage),
-        DeterministicReviewer(),
+        subjects,
+        _fixture_reviewer(root, labels, independent_report),
     )
     with tempfile.TemporaryDirectory(
         prefix=f"testlens_eval_{root.name}_"
@@ -120,7 +230,9 @@ def _evaluate_fixture(
             sandbox_config=config,
             artifact_root=Path(temporary),
         )
-    audit_report = grade_and_emit(scan, triage, review, repro)
+    audit_report = grade_and_emit(
+        scan, triage, review, repro, independent_report=independent_report
+    )
 
     if audit_report.folded_suspicious:
         warnings.add(
@@ -151,6 +263,17 @@ def _evaluate_fixture(
         ),
         replayed=generation_trace.replayed or triage_trace.replayed,
     )
+    if independent_report is not None:
+        independent_trace = independent_report.trace
+        usage = LLMCallStats(
+            calls=usage.calls + independent_trace.llm_calls,
+            retries=usage.retries + independent_trace.llm_retries,
+            prompt_tokens=usage.prompt_tokens + independent_trace.prompt_tokens,
+            completion_tokens=(
+                usage.completion_tokens + independent_trace.completion_tokens
+            ),
+            replayed=usage.replayed or independent_trace.replayed,
+        )
     return (
         FixtureEvaluation(
             project=root.name,
@@ -175,6 +298,7 @@ def run_evaluation(
     health_timeout_seconds: float = 30.0,
     calibration_thresholds: Sequence[float] = DEFAULT_CALIBRATION,
     llm_factory: Callable[[Mapping[str, str] | None], LLMClient] | None = None,
+    independent: bool = False,
 ) -> EvaluationReport:
     if not 0.0 <= threshold <= 1.0:
         raise ValueError("threshold must be between 0 and 1")
@@ -206,6 +330,17 @@ def run_evaluation(
     if not roots:
         raise FixtureError("no fixtures provided")
 
+    labels_by_root = {root: load_labels(root) for root in roots}
+    if independent:
+        for root in roots:
+            labels = labels_by_root[root]
+            if not any(
+                label.source == "llm_independent" for label in labels.defects
+            ):
+                raise FixtureError(
+                    f"{root.name}: --independent requires llm_independent labels"
+                )
+
     health = check_sandbox_ready(
         timeout_seconds=health_timeout_seconds, config=config
     )
@@ -218,7 +353,7 @@ def run_evaluation(
     usage = LLMCallStats()
 
     for root in roots:
-        labels = load_labels(root)
+        labels = labels_by_root[root]
         evaluation, test_report, fixture_usage = _evaluate_fixture(
             root,
             labels,
@@ -228,6 +363,7 @@ def run_evaluation(
             config=config,
             warnings=warnings,
             llm_factory=factory,
+            independent=independent,
         )
         fixture_reports.append(evaluation)
         usage = LLMCallStats(
@@ -253,6 +389,7 @@ def run_evaluation(
         model_id=model_id,
         prompt_template_version=GENERATION_TEMPLATE_VERSION,
         replayed=replayed or usage.replayed,
+        independent=independent,
         llm_calls=usage.calls,
         llm_retries=usage.retries,
         prompt_tokens=usage.prompt_tokens,
@@ -296,6 +433,7 @@ def render_summary(report: EvaluationReport) -> str:
         f"- elapsed_ms: {trace.elapsed_ms}",
         f"- model: `{trace.model_kind.value}` / `{trace.model_id}`",
         f"- replayed: {trace.replayed}",
+        f"- independent: {trace.independent}",
         f"- model_calls: {trace.llm_calls} (retries: {trace.llm_retries})",
         f"- model_tokens: prompt={trace.prompt_tokens} "
         f"completion={trace.completion_tokens}",
@@ -365,6 +503,28 @@ def render_summary(report: EvaluationReport) -> str:
             f"{rule.emitted_findings} | {rule.true_positives} | {rule.false_positives} |"
             for rule in audit.per_rule
         )
+        if audit.independent_candidates or audit.independent_findings:
+            independent_precision = (
+                "n/a"
+                if audit.independent_precision is None
+                else f"{audit.independent_precision:.2f}"
+            )
+            independent_recall = (
+                "n/a"
+                if audit.independent_recall is None
+                else f"{audit.independent_recall:.2f}"
+            )
+            lines.extend(
+                [
+                    "",
+                    "Independent claims: "
+                    f"candidates={audit.independent_candidates}, "
+                    f"findings={audit.independent_findings}, "
+                    f"precision={independent_precision}, "
+                    f"recall={independent_recall}, "
+                    f"retracted={audit.independent_retracted}",
+                ]
+            )
         lines.extend(
             [
                 "",

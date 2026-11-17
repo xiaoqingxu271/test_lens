@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from audit.grade import grade_and_emit
+from audit.independent import scan_independent
 from audit.repro import run_repro
 from audit.rule_scan import scan_rules
 from audit.triage import llm_triage
@@ -31,7 +32,11 @@ from llm.options import (
     options_from_args,
 )
 from pipeline.run import run_test_pipeline
-from review.cross_check import cross_check, subjects_from_candidates
+from review.cross_check import (
+    cross_check,
+    subjects_from_candidates,
+    subjects_from_independent_claims,
+)
 from review.fake import DeterministicReviewer
 from sandbox import runner
 from sandbox.container import (
@@ -84,6 +89,16 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--output", default=None, help="report output root")
     audit.add_argument("--db", default=None, help="SQLite metadata path")
     audit.add_argument("--json", action="store_true", dest="as_json")
+    audit.add_argument(
+        "--independent",
+        action="store_true",
+        help="scan for LLM-independent semantic claims",
+    )
+    audit.add_argument(
+        "--proposals",
+        default=None,
+        help="JSON file mapping deterministic request ids to fake responses",
+    )
     _add_sandbox_args(audit)
     add_llm_arguments(audit)
 
@@ -93,6 +108,11 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--seed", type=int, default=0)
     evaluate.add_argument("--db", default=None, help="SQLite metadata path")
     evaluate.add_argument("--json", action="store_true", dest="as_json")
+    evaluate.add_argument(
+        "--independent",
+        action="store_true",
+        help="enable LLM-independent claims (requires fixture labels)",
+    )
     _add_sandbox_args(evaluate)
     add_llm_arguments(evaluate)
 
@@ -232,13 +252,24 @@ def _audit(args) -> int:
     root = _project(args.project)
     profile = _profile(root)
     options = options_from_args(args)
-    llm = build_llm(options)
+    responses = (
+        load_proposals_file(Path(args.proposals).expanduser().resolve())
+        if args.proposals
+        else None
+    )
+    if args.proposals and options.mode is not LLMMode.FAKE:
+        raise ValueError("--proposals requires --llm fake")
+    llm = build_llm(options, responses)
     scan = scan_rules(profile)
+    independent = scan_independent(profile, scan, llm) if args.independent else None
     triage = llm_triage(profile, scan, llm)
+    subjects = subjects_from_candidates(scan, triage)
+    if independent is not None:
+        subjects = subjects + subjects_from_independent_claims(independent)
     review = cross_check(
         profile,
         scan,
-        subjects_from_candidates(scan, triage),
+        subjects,
         DeterministicReviewer(),
     )
     config = runner.resolve_config(_sandbox_config(args))
@@ -250,7 +281,9 @@ def _audit(args) -> int:
             sandbox_config=config,
             artifact_root=Path(temporary),
         )
-    report = grade_and_emit(scan, triage, review, repro)
+    report = grade_and_emit(
+        scan, triage, review, repro, independent_report=independent
+    )
 
     if args.db:
         with open_database(args.db) as conn:
@@ -293,6 +326,7 @@ def _evaluation(args) -> int:
         threshold=args.threshold,
         seed=args.seed,
         write=True,
+        independent=args.independent,
         sandbox_config=_sandbox_config(args),
         llm_factory=build_llm_factory(options),
     )

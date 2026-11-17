@@ -30,6 +30,8 @@ from .models import (
     Finding,
     FindingSource,
     GradingTrace,
+    IndependentClaim,
+    IndependentReport,
     ReproReport,
     Retracted,
     RetractReason,
@@ -77,6 +79,27 @@ def _finding(
     )
 
 
+def _independent_finding(
+    claim: IndependentClaim, level: EvidenceLevel
+) -> Finding:
+    from .independent import claim_title
+
+    return Finding(
+        finding_id=claim.finding_id,
+        file=claim.file,
+        line_start=claim.line_start,
+        line_end=claim.line_end,
+        rule_id=None,
+        llm_finding_id=None,
+        source=FindingSource.LLM_INDEPENDENT,
+        title=claim_title(claim),
+        evidence_level=level,
+        claim=claim.claim,
+        claim_kind=claim.claim_kind,
+        trigger_path=list(claim.trigger_path),
+    )
+
+
 def _sort_key(finding: Finding) -> tuple[str, int, int, str, str]:
     return (
         finding.file,
@@ -92,6 +115,7 @@ def grade_and_emit(
     triage_report: TriageReport,
     cross_check_report: CrossCheckReport,
     repro_report: ReproReport,
+    independent_report: IndependentReport | None = None,
 ) -> AuditReport:
     started_at = datetime.now(timezone.utc).isoformat()
     started = time.perf_counter()
@@ -113,7 +137,21 @@ def grade_and_emit(
         raise ValueError(
             "missing cross-check results: " + ", ".join(sorted(missing))
         )
-    unexpected = results.keys() - candidate_ids
+
+    independent_claims = (
+        list(independent_report.claims) if independent_report is not None else []
+    )
+    independent_ids = {claim.finding_id for claim in independent_claims}
+    if len(independent_ids) != len(independent_claims):
+        raise ValueError("duplicate independent finding ids")
+    missing_independent = independent_ids - results.keys()
+    if missing_independent:
+        raise ValueError(
+            "missing independent cross-check results: "
+            + ", ".join(sorted(missing_independent))
+        )
+
+    unexpected = results.keys() - candidate_ids - independent_ids
     if unexpected:
         raise ValueError(
             "cross-check results without candidates: "
@@ -165,6 +203,58 @@ def grade_and_emit(
         else:
             findings.append(finding)
 
+    independent_emitted = 0
+    independent_retracted = 0
+    for claim in independent_claims:
+        result = results[claim.finding_id]
+        if result.verdict == ReviewVerdict.REFUTE:
+            reason = result.retract_reason or RetractReason.REFUTED_BY_CONTEXT
+            retracted.append(
+                Retracted(
+                    finding=_independent_finding(
+                        claim, EvidenceLevel.SUSPICIOUS
+                    ),
+                    reason=reason,
+                )
+            )
+            retract_counts[reason] += 1
+            independent_retracted += 1
+            continue
+        if result.verdict == ReviewVerdict.UNVERIFIABLE:
+            reason = result.retract_reason or RetractReason.UNVERIFIABLE_CLAIM
+            retracted.append(
+                Retracted(
+                    finding=_independent_finding(
+                        claim, EvidenceLevel.SUSPICIOUS
+                    ),
+                    reason=reason,
+                )
+            )
+            retract_counts[reason] += 1
+            independent_retracted += 1
+            continue
+
+        # A semantic claim never folds as SUSPICIOUS: it either has structured
+        # evidence and is statically confirmed, or it is retracted.
+        if not _static_evidence(result):
+            reason = RetractReason.UNVERIFIABLE_CLAIM
+            retracted.append(
+                Retracted(
+                    finding=_independent_finding(
+                        claim, EvidenceLevel.SUSPICIOUS
+                    ),
+                    reason=reason,
+                )
+            )
+            retract_counts[reason] += 1
+            independent_retracted += 1
+            continue
+
+        finding = _independent_finding(claim, EvidenceLevel.STATIC_CONFIRMED)
+        level_counts[EvidenceLevel.STATIC_CONFIRMED] += 1
+        findings.append(finding)
+        independent_emitted += 1
+
     findings.sort(key=_sort_key)
     folded.sort(key=_sort_key)
     retracted.sort(
@@ -188,6 +278,9 @@ def grade_and_emit(
         repro_reproduced=sum(
             1 for artifact in repro_report.artifacts if artifact.reproduced
         ),
+        independent_candidates_considered=len(independent_claims),
+        independent_findings_emitted=independent_emitted,
+        independent_retracted=independent_retracted,
         warnings=[],
     )
     return AuditReport(

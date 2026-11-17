@@ -22,7 +22,7 @@ class RuleId(str, Enum):
 class FindingSource(str, Enum):
     RULE = "RULE"
     RULE_WITH_LLM_TRIAGE = "RULE_WITH_LLM_TRIAGE"
-    LLM_INDEPENDENT = "LLM_INDEPENDENT"  # reserved for v2; never emitted in v1
+    LLM_INDEPENDENT = "LLM_INDEPENDENT"  # emitted only by the opt-in 2C stage
 
 
 class RuleCandidate(BaseModel):
@@ -54,6 +54,92 @@ class RuleScanTrace(BaseModel):
 class RuleScanReport(BaseModel):
     candidates: list[RuleCandidate] = Field(default_factory=list)
     trace: RuleScanTrace
+
+
+class ClaimKind(str, Enum):
+    MISSING_INPUT_VALIDATION = "MISSING_INPUT_VALIDATION"
+    UNSAFE_SINK = "UNSAFE_SINK"
+    SWALLOWED_ERROR = "SWALLOWED_ERROR"
+    RESOURCE_LIFECYCLE = "RESOURCE_LIFECYCLE"
+    INCONSISTENT_STATE = "INCONSISTENT_STATE"
+
+
+class IndependentRejectReason(str, Enum):
+    SOURCE_UNREADABLE = "source_unreadable"
+    EMPTY_RESPONSE = "empty_response"
+    INVALID_JSON = "invalid_json"
+    INVALID_SHAPE = "invalid_shape"
+    UNSUPPORTED_CLAIM_KIND = "unsupported_claim_kind"
+    EMPTY_CLAIM = "empty_claim"
+    EMPTY_QUOTE = "empty_quote"
+    QUOTE_TOO_LONG = "quote_too_long"
+    UNLOCATABLE_QUOTE = "unlocatable_quote"
+    AMBIGUOUS_QUOTE = "ambiguous_quote"
+    CLAIM_OUTSIDE_FUNCTION = "claim_outside_function"
+    DUPLICATE_OF_RULE = "duplicate_of_rule"
+    DUPLICATE_CLAIM = "duplicate_claim"
+
+
+class IndependentClaim(BaseModel):
+    """A semantic claim anchored by the stage, never by the model."""
+
+    finding_id: str
+    claim_kind: ClaimKind
+    file: str
+    line_start: int
+    line_end: int
+    symbol_id: str
+    claim: str
+    trigger_path: list[str] = Field(default_factory=list)
+    quote: str
+    snippet_hash: str
+    prompt_digest: str = ""
+    response_digest: str = ""
+    prompt_template_version: str = ""
+    model_kind: ModelKind = ModelKind.FAKE
+    model_id: str = ""
+
+
+class RejectedIndependentClaim(BaseModel):
+    file: str
+    symbol_id: str | None = None
+    line_start: int | None = None
+    line_end: int | None = None
+    reason: IndependentRejectReason
+    detail: str
+    prompt_digest: str = ""
+    response_digest: str = ""
+    model_kind: ModelKind = ModelKind.FAKE
+    model_id: str = ""
+
+
+class IndependentTrace(BaseModel):
+    started_at: str
+    elapsed_ms: int
+    files_scanned: int = 0
+    functions_considered: int = 0
+    requests_sent: int = 0
+    claims_received: int = 0
+    claims_accepted: int = 0
+    claims_rejected: int = 0
+    rejected_by_reason: dict[IndependentRejectReason, int] = Field(
+        default_factory=dict
+    )
+    llm_model_kind: ModelKind
+    llm_model_id: str
+    prompt_template_version: str
+    llm_calls: int = 0
+    llm_retries: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    replayed: bool = False
+    warnings: list[str] = Field(default_factory=list)
+
+
+class IndependentReport(BaseModel):
+    claims: list[IndependentClaim] = Field(default_factory=list)
+    rejected: list[RejectedIndependentClaim] = Field(default_factory=list)
+    trace: IndependentTrace
 
 
 class TriageRejectReason(str, Enum):
@@ -211,6 +297,7 @@ class Finding(BaseModel):
     title: str
     evidence_level: EvidenceLevel
     claim: str | None = None
+    claim_kind: ClaimKind | None = None
     trigger_path: list[str] = Field(default_factory=list)
     repro_artifact: ReproArtifact | None = None
 
@@ -231,6 +318,9 @@ class GradingTrace(BaseModel):
     retract_reason_counts: dict[RetractReason, int] = Field(default_factory=dict)
     repro_attempted: int = 0
     repro_reproduced: int = 0
+    independent_candidates_considered: int = 0
+    independent_findings_emitted: int = 0
+    independent_retracted: int = 0
     warnings: list[str] = Field(default_factory=list)
 
 

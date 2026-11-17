@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-TestLens 2.0.0 is released. The v1 validation infrastructure (sandbox runner, double-run flaky detection, mutation operators and scoring), deterministic target selection, deterministic rule scan (R001–R005), the LLM interface with a deterministic fake, sandbox-gated candidate test generation, line-anchored audit triage, the false-positive cross-check, sandbox reproduction, evidence grading/`AuditReport` emission, the test-side pipeline closure, the evaluation harness on vendored fixtures, the CLI, README, and SQLite metadata are implemented. 2.0.0 adds the opt-in container sandbox backend (2A) and the real-model/replay client layer (2B); `docs/v2-spec.md` and `docs/v2-spec-2b.md` record their accepted designs. This file remains the single source of truth; the confirmed design decisions at the end are normative. Continue in Build order; do not add an `LLM_INDEPENDENT` path before its v2 specification is confirmed.
+TestLens 2.0.0 is released. The v1 validation infrastructure (sandbox runner, double-run flaky detection, mutation operators and scoring), deterministic target selection, deterministic rule scan (R001–R005), the LLM interface with a deterministic fake, sandbox-gated candidate test generation, line-anchored audit triage, the false-positive cross-check, sandbox reproduction, evidence grading/`AuditReport` emission, the test-side pipeline closure, the evaluation harness on vendored fixtures, the CLI, README, and SQLite metadata are implemented. 2.0.0 adds the opt-in container sandbox backend (2A) and the real-model/replay client layer (2B). The 2C increment (unreleased) adds opt-in `LLM_INDEPENDENT` semantic audit claims. `docs/v2-spec.md`, `docs/v2-spec-2b.md`, and `docs/v2-spec-2c.md` record their accepted designs. This file remains the single source of truth; the confirmed design decisions at the end are normative. Continue in Build order; do not add further audit sources or claim kinds beyond the confirmed 2C set without a confirmed v2 specification.
 
 Goal: for small Python web projects (FastAPI/Flask style with clear routes and function boundaries), an LLM only proposes candidates. Sandboxed execution, mutation scoring, and an independent false-positive review decide what survives; attribution explains every rejection.
 
@@ -21,11 +21,11 @@ Goal: for small Python web projects (FastAPI/Flask style with clear routes and f
 ## Source layout
 
 - `sandbox/` — `runner.py` (frozen execution report), `double_run.py` (flaky merge), `health.py` (generation gate: acceptance probe), `container.py` (opt-in Docker backend availability and command construction), `Dockerfile` (default sandbox image), `_pytest_plugin.py` (child-side test reporting and target-symbol coverage).
-- `docs/` — `v2-spec.md` (accepted 2A container sandbox specification) and `v2-spec-2b.md` (accepted real-model and replay specification).
+- `docs/` — `v2-spec.md` (accepted 2A container sandbox specification), `v2-spec-2b.md` (accepted real-model and replay specification), and `v2-spec-2c.md` (accepted LLM-independent claims specification).
 - `mutation/` — fixed AST operator set and mutation scoring.
 - `project/` — deterministic Python file discovery, parsing, and enumerated skip reasons.
 - `targets/` — AST route extraction and target-selection reports.
-- `audit/` — rule scan, R001–R005 handlers, LLM triage, sandbox reproduction, and evidence grading; `RuleCandidate` and `TriageDraft` are intermediate stage outputs, not final `Finding`s.
+- `audit/` — rule scan, R001–R005 handlers, opt-in independent semantic claims (`independent.py`), LLM triage, sandbox reproduction, and evidence grading; `RuleCandidate`, `TriageDraft`, and `IndependentClaim` are intermediate stage outputs, not final `Finding`s.
 - `llm/` — provider-neutral request/response contracts, the `LLMClient` protocol, the deterministic fake, record/replay clients, the budget wrapper, and the single real-provider adapter. Provider credentials and network calls exist only here.
 - `generation/` — prompt construction, deterministic proposal validation, and `generate_tests`; emits candidates only and never executes or writes the target project.
 - `review/` — false-positive cross-check: deterministic rule reviewer, independent reviewer interface and fake, context assembly, and evidence-anchor validation.
@@ -55,9 +55,9 @@ A test is kept only if it passes in the sandbox **and** reaches the configurable
 
 ### Audit pipeline
 
-`rule_scan` (deterministic, precise line numbers first) → `llm_triage` (line-anchored drafts only) → `cross_check` (independent adversarial review) → `sandbox_repro` (only for claims of reproducibility) → `grade_and_emit`.
+`rule_scan` (deterministic, precise line numbers first) → `independent_scan` (opt-in, semantic claims anchored to a verbatim quote) → `llm_triage` (line-anchored drafts only) → `cross_check` (independent adversarial review) → `sandbox_repro` (rule claims only) → `grade_and_emit`.
 
-LLM never owns line localization or rule matching; those stay deterministic. A failed cross-check downgrades or retracts — it never leaves a low-confidence finding in the output.
+LLM never owns line localization or rule matching; those stay deterministic. A failed cross-check downgrades or retracts — it never leaves a low-confidence finding in the output. Independent claims have no rule anchor, so they must earn structured reviewer evidence; the ceiling is `STATIC_CONFIRMED`.
 
 ## Hard invariants
 
@@ -71,6 +71,7 @@ LLM never owns line localization or rule matching; those stay deterministic. A f
 - Double-run is on by default and mandatory for evaluation. A run with it disabled is marked `double_run=false` and excluded from evaluation reports.
 - Mutation results are reported with the assertion/exception/timeout breakdown; an aggregate kill rate alone is not a valid report.
 - A cross-check verdict without structured `evidence_lines` cannot support `STATIC_CONFIRMED`.
+- Independent semantic claims never exceed `STATIC_CONFIRMED` and are never folded as `SUSPICIOUS`; they are either confirmed with evidence or retracted with a `RetractReason`.
 
 ## V1 deterministic rule set
 
@@ -129,7 +130,7 @@ Rule IDs are used in reports and evaluation grouping. Adding a rule requires upd
 - Rejection reasons (`TriageRejectReason`): `EMPTY_RESPONSE`, `INVALID_JSON`, `INVALID_SHAPE`, `SOURCE_UNREADABLE`, `UNKNOWN_FINDING`, `RULE_MISMATCH`, `LINE_ANCHOR_MISMATCH`, `NO_TRIGGER_PATH`, `EMPTY_CLAIM`.
 - `TriageDraft` carries `finding_id`, `rule_id`, `source`, `file`, `line_start`, `line_end`, `claim`, `trigger_path`, prompt/response digests, template version, and model identity.
 - `TriageTrace` records model kind/id, template version, candidates considered, drafts accepted/rejected, rejections by reason, elapsed time, and warnings.
-- Triage is not a final finding: cross-check, reproduction, and evidence grading remain later stages. `LLM_INDEPENDENT` is still not emitted.
+- Triage is not a final finding: cross-check, reproduction, and evidence grading remain later stages. Triage never emits `LLM_INDEPENDENT`; only the separate opt-in 2C stage does.
 
 ### False-positive cross-check (v1)
 
@@ -210,7 +211,9 @@ Evidence levels: `REPRODUCED`, `STATIC_CONFIRMED`, `SUSPICIOUS`.
 
 Retract reasons: `REFUTED_BY_CONTEXT`, `NO_LINE_LOCATION`, `UNVERIFIABLE_CLAIM`, `DUPLICATE`.
 
-Reports are `TestReport` (`kept`, `discarded`, `flaky`, `trace`) and `AuditReport` (`findings`, `folded_suspicious`, `retracted`, `trace`). `KeptTest` carries `target_symbol`, `test_file`, `test_name`, `execution_status="passed"`, `mutation_kill_rate`, `mutations_run`, `mutations_killed`. Each `Finding` carries `file`, `line_start`, `line_end`, `rule_id` or `llm_finding_id`, `source`, `title`, `evidence_level`, and an optional `repro_artifact`. In v1, `source` is `RULE` or `RULE_WITH_LLM_TRIAGE`; `llm_finding_id` identifies a rule candidate whose trigger path was completed by LLM triage, never an LLM-independent discovery. `LLM_INDEPENDENT` is reserved for v2. `Retracted` carries the finding reference and a `RetractReason`.
+Reports are `TestReport` (`kept`, `discarded`, `flaky`, `trace`) and `AuditReport` (`findings`, `folded_suspicious`, `retracted`, `trace`). `KeptTest` carries `target_symbol`, `test_file`, `test_name`, `execution_status="passed"`, `mutation_kill_rate`, `mutations_run`, `mutations_killed`. Each `Finding` carries `file`, `line_start`, `line_end`, `rule_id` or `llm_finding_id`, `source`, `title`, `evidence_level`, an optional `claim_kind`, and an optional `repro_artifact`. `source` is `RULE`, `RULE_WITH_LLM_TRIAGE`, or (2C, opt-in) `LLM_INDEPENDENT`; `llm_finding_id` identifies a rule candidate whose trigger path was completed by LLM triage, never an LLM-independent discovery. Independent claims use `rule_id=None`, `llm_finding_id=None`, and a `claim_kind`. `Retracted` carries the finding reference and a `RetractReason`.
+
+Claim kinds: `MISSING_INPUT_VALIDATION`, `UNSAFE_SINK`, `SWALLOWED_ERROR`, `RESOURCE_LIFECYCLE`, `INCONSISTENT_STATE`. Independent reject reasons: `SOURCE_UNREADABLE`, `EMPTY_RESPONSE`, `INVALID_JSON`, `INVALID_SHAPE`, `UNSUPPORTED_CLAIM_KIND`, `EMPTY_CLAIM`, `EMPTY_QUOTE`, `QUOTE_TOO_LONG`, `UNLOCATABLE_QUOTE`, `AMBIGUOUS_QUOTE`, `CLAIM_OUTSIDE_FUNCTION`, `DUPLICATE_OF_RULE`, `DUPLICATE_CLAIM`.
 
 ## Confirmed design decisions (v2 / 2A container backend)
 
@@ -240,6 +243,23 @@ These decisions are normative for the real-model layer. `docs/v2-spec-2b.md` hol
 - CLI: `--llm {fake,replay,real}`, `--transcript`, `--record-to`, `--model-id`, `--max-calls`, `--max-tokens` on all three commands. Model/transport/budget failures exit with `EXIT_MODEL=4`.
 - Real-model evaluations are manual and write to a model-labeled output; they never overwrite the fake baseline. A small vendored transcript may be used for offline integration tests.
 
+## Confirmed design decisions (v2 / 2C LLM-independent claims)
+
+These decisions are normative for `LLM_INDEPENDENT`. `docs/v2-spec-2c.md` holds the full design.
+
+- The stage is `audit/independent.py::scan_independent(profile, rule_report, llm)` and is opt-in (`audit --independent`, `eval --independent`). It scans module-level `def`/`async def` only, one request per function in deterministic `(relative_file, line_start, name)` order, with `request_id = llm_independent::<relative_file>::<name>` and template `independent-v1`. There is no function cap beyond the model budget.
+- The prompt contains only deterministic context: file, symbol, function source and span, imports, decorators, type hints, and rule candidates already inside the function. It never contains triage or reviewer reasoning.
+- The model returns `claim_kind`, a verbatim `quote` (≤400 characters), `claim`, and `trigger_path`. It never supplies file, line numbers, rule ids, or finding ids.
+- Anchoring is deterministic: the quote must occur exactly once inside the function span. Zero occurrences → `UNLOCATABLE_QUOTE`; multiple → `AMBIGUOUS_QUOTE`; a span leaving the function → `CLAIM_OUTSIDE_FUNCTION`; empty → `EMPTY_QUOTE`; overlong → `QUOTE_TOO_LONG`.
+- `ClaimKind` is a closed set of five values. Unknown kinds are rejected with `UNSUPPORTED_CLAIM_KIND`; the set is not extended at runtime.
+- `finding_id = "indep::" + sha256(relative_file \x1f symbol_id \x1f claim_kind \x1f line_start \x1f line_end \x1f snippet_hash)[:16]`; it is stable across runs and independent of the claim wording. The title is `"<claim_kind>: <function name>"`.
+- Dedup is deterministic: a span overlapping any rule candidate is `DUPLICATE_OF_RULE`; two claims resolving to the same `finding_id` keep the first in sort order and reject the rest as `DUPLICATE_CLAIM`. No fuzzy matching.
+- `DeterministicReviewer` returns `unverifiable`/`UNVERIFIABLE_CLAIM` for a semantic claim with no registered verdict; it no longer auto-passes `rule_id=None`. `pass` still requires anchored `supports` evidence.
+- Independent grading: `refute`/`unverifiable` → retracted; `pass` with evidence → `STATIC_CONFIRMED`; no independent claim can be `REPRODUCED` or folded as `SUSPICIOUS`. `grade_and_emit` requires exactly one cross-check result per accepted claim.
+- `Finding.source=LLM_INDEPENDENT` implies `rule_id=None`, `llm_finding_id=None`, and a set `claim_kind`. `GradingTrace` counts independent candidates, emitted findings, and retractions separately.
+- The default fake returns `{"claims": []}` for `LLM_INDEPENDENT`; a fixture may seed `independent_proposals.json` for offline evaluation. Replay and budgets are the 2B mechanisms unchanged.
+- Evaluation keeps the rule-only baseline by default; `--independent` requires `llm_independent` fixture labels and reports rule and independent precision/recall separately. The calibrated threshold is unchanged until independent calibration evidence is accepted.
+
 ## Environment note
 
 Development happens on Windows (Git Bash). `resource` is POSIX-only. POSIX enforces `RLIMIT_AS`/`RLIMIT_CPU`; Windows enforces the subprocess timeout and uses `psutil` (optional extra `sandbox`) for best-effort memory/CPU limits. Do not introduce ctypes Job Object code. The deterministic evaluation baseline is Linux; every report states the platform and whether limits were `enforced` or `best-effort`.
@@ -253,11 +273,12 @@ CI (`.github/workflows/ci.yml`) runs the suite and `python -m evaluation` on Ubu
 - Run one file: `python -m pytest tests/test_mutation_score.py`
 - Run target selection or rule scan: `python -m pytest tests/test_target_selection.py`, `python -m pytest tests/test_rule_scan.py`
 - Run generation: `python -m pytest tests/test_generation.py`; sandbox gate: `python -m pytest tests/test_sandbox_health.py`
-- Run audit triage: `python -m pytest tests/test_triage.py`; cross-check: `python -m pytest tests/test_cross_check.py`
+- Run audit triage: `python -m pytest tests/test_triage.py`; cross-check: `python -m pytest tests/test_cross_check.py`; independent claims: `python -m pytest tests/test_independent.py`
 - Run reproduction/grading: `python -m pytest tests/test_repro.py`, `python -m pytest tests/test_grade.py`
 - Run test pipeline: `python -m pytest tests/test_pipeline.py`
 - Run evaluation tests: `python -m pytest tests/test_evaluation.py`
 - Run the evaluation baseline: `python -m evaluation` (writes under `eval/reports/`); `python -m evaluation --no-write` prints metrics only
+- Run the independent audit path: `python -m cli audit PROJECT --independent --proposals independent_proposals.json`; `python -m evaluation --independent` (requires `llm_independent` fixture labels)
 - Build the default container image: `docker build -t testlens-sandbox:1 sandbox`
 - Run container tests: `TESTLENS_CONTAINER_IMAGE=testlens-sandbox:1 python -m pytest -m container`
 - Run the container evaluation baseline: `python -m evaluation --sandbox-backend container --sandbox-image testlens-sandbox:1`

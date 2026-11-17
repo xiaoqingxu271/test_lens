@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Opt-in LLM-independent semantic audit claims (2C): `testlens audit
+  PROJECT --independent` and `testlens eval --independent`.
+- `audit/independent.py` sends one `llm_independent` request per module-level
+  function and anchors each claim from a verbatim quote. The model supplies no
+  file, line number, rule id, or verdict.
+- Closed `ClaimKind` set: `MISSING_INPUT_VALIDATION`, `UNSAFE_SINK`,
+  `SWALLOWED_ERROR`, `RESOURCE_LIFECYCLE`, `INCONSISTENT_STATE`.
+- Deterministic dedup: span overlap with a rule candidate becomes
+  `DUPLICATE_OF_RULE`; a repeated anchor becomes `DUPLICATE_CLAIM`.
+- `IndependentClaim`, `RejectedIndependentClaim`, `IndependentTrace`,
+  `IndependentReport`, and the additive `Finding.claim_kind` field.
+- Independent findings are capped at `STATIC_CONFIRMED`, never `REPRODUCED`,
+  and never folded as `SUSPICIOUS`; they still require structured cross-check
+  evidence.
+- The deterministic reviewer now returns `unverifiable` for semantic claims
+  without a registered verdict instead of auto-passing them. The default fake
+  proposes no independent claims.
+- Evaluation reports rule and independent precision/recall separately;
+  `independent_proposals.json` seeds fixed offline independent responses, and
+  `--independent` requires fixtures with `llm_independent` labels.
+- `docs/v2-spec-2c.md` accepted 2C specification.
+
 ## 2.0.0 — 2026-11-16
 
 ### Added

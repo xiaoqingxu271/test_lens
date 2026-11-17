@@ -16,9 +16,11 @@ from sandbox.runner import EnforcementMode
 
 class Label(BaseModel):
     file: str
-    rule_id: str
+    rule_id: str | None = None
     marker: str
     line: int
+    source: str = "rule"
+    claim_kind: str | None = None
     case: str | None = None
     retract_reason: str | None = None
 
@@ -35,6 +37,7 @@ class FindingSummary(BaseModel):
     line_start: int
     line_end: int
     rule_id: str | None = None
+    claim_kind: str | None = None
     source: str
     evidence_level: str
 
@@ -86,6 +89,14 @@ class AuditSideEvaluation(BaseModel):
     false_positives_retracted: int = 0
     false_negative_labels: int = 0
     false_negatives_observed: int = 0
+    rule_findings_emitted: int = 0
+    independent_candidates: int = 0
+    independent_findings: int = 0
+    independent_true_positives: int = 0
+    independent_false_positives: int = 0
+    independent_precision: float | None = None
+    independent_recall: float | None = None
+    independent_retracted: int = 0
     evidence_level_counts: dict[str, int] = Field(default_factory=dict)
     retract_reason_counts: dict[str, int] = Field(default_factory=dict)
     per_rule: list[RuleEvaluation] = Field(default_factory=list)
@@ -112,6 +123,7 @@ class EvaluationTrace(BaseModel):
     model_kind: ModelKind = ModelKind.FAKE
     model_id: str = ""
     replayed: bool = False
+    independent: bool = False
     llm_calls: int = 0
     llm_retries: int = 0
     prompt_tokens: int = 0

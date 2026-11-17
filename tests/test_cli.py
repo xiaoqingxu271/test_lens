@@ -136,6 +136,87 @@ def test_audit_cli_writes_findings_and_retractions(tmp_path, capsys):
         assert conn.execute("SELECT COUNT(*) FROM retracted").fetchone()[0] == 2
 
 
+def _independent_project(root: Path) -> Path:
+    project = root / "independent_project"
+    project.mkdir(parents=True)
+    (project / "app.py").write_text(
+        """\
+def value(flag):
+    if flag:
+        return 1
+    return 0
+""",
+        encoding="utf-8",
+    )
+    return project
+
+
+def _independent_proposals(root: Path) -> Path:
+    path = root / "independent_proposals.json"
+    path.write_text(
+        json.dumps(
+            {
+                "llm_independent::app.py::value": {
+                    "claims": [
+                        {
+                            "claim_kind": "MISSING_INPUT_VALIDATION",
+                            "quote": "if flag:",
+                            "claim": "flag is used without validation",
+                            "trigger_path": ["flag", "return 1"],
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_audit_cli_runs_independent_claims_and_reports_retractions(
+    tmp_path, capsys
+):
+    project = _independent_project(tmp_path)
+    proposals = _independent_proposals(tmp_path)
+
+    exit_code = cli.main(
+        [
+            "audit",
+            str(project),
+            "--independent",
+            "--proposals",
+            str(proposals),
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["findings"] == []
+    assert len(payload["retracted"]) == 1
+    retracted = payload["retracted"][0]
+    assert retracted["reason"] == "UNVERIFIABLE_CLAIM"
+    assert retracted["finding"]["source"] == "LLM_INDEPENDENT"
+    assert retracted["finding"]["rule_id"] is None
+    assert retracted["finding"]["claim_kind"] == "MISSING_INPUT_VALIDATION"
+    assert payload["trace"]["independent_candidates_considered"] == 1
+    assert payload["trace"]["independent_retracted"] == 1
+
+
+def test_audit_cli_skips_independent_claims_without_the_flag(tmp_path, capsys):
+    project = _independent_project(tmp_path)
+    proposals = _independent_proposals(tmp_path)
+
+    exit_code = cli.main(
+        ["audit", str(project), "--proposals", str(proposals), "--json"]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["retracted"] == []
+    assert payload["trace"]["independent_candidates_considered"] == 0
+
+
 def test_tests_cli_returns_3_when_the_sandbox_is_unavailable(
     tmp_path, monkeypatch, capsys
 ):
@@ -182,12 +263,13 @@ def test_eval_cli_delegates_to_the_harness(monkeypatch, capsys):
     monkeypatch.setattr(cli, "run_evaluation", fake_run_evaluation)
 
     exit_code = cli.main(
-        ["eval", "--threshold", "0.4", "--seed", "2"]
+        ["eval", "--threshold", "0.4", "--seed", "2", "--independent"]
     )
 
     assert exit_code == 0
     assert captured["threshold"] == 0.4
     assert captured["seed"] == 2
+    assert captured["independent"] is True
     assert captured["write"] is True
     assert capsys.readouterr().out == ""
 

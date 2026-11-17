@@ -151,6 +151,10 @@ def default_responder(request: LLMRequest) -> str:
         if candidate is None:
             return ""
         return _triage_response(candidate)
+    if request.purpose is LLMPurpose.LLM_INDEPENDENT:
+        # The default fake proposes no semantic claims: independent findings
+        # must be explicitly seeded so they cannot inflate precision.
+        return json.dumps({"claims": []}, sort_keys=True)
     return ""
 
 

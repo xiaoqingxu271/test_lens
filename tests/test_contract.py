@@ -6,9 +6,13 @@ import evaluation
 import llm
 from audit.models import (
     AuditReport,
+    ClaimKind,
     EvidenceLevel,
     Finding,
     FindingSource,
+    IndependentClaim,
+    IndependentReport,
+    IndependentTrace,
     Retracted,
     RetractReason,
 )
@@ -265,10 +269,49 @@ CONTRACTS = {
         "title",
         "evidence_level",
         "claim",
+        "claim_kind",
         "trigger_path",
         "repro_artifact",
     },
     Retracted: {"finding", "reason"},
+    IndependentClaim: {
+        "finding_id",
+        "claim_kind",
+        "file",
+        "line_start",
+        "line_end",
+        "symbol_id",
+        "claim",
+        "trigger_path",
+        "quote",
+        "snippet_hash",
+        "prompt_digest",
+        "response_digest",
+        "prompt_template_version",
+        "model_kind",
+        "model_id",
+    },
+    IndependentTrace: {
+        "started_at",
+        "elapsed_ms",
+        "files_scanned",
+        "functions_considered",
+        "requests_sent",
+        "claims_received",
+        "claims_accepted",
+        "claims_rejected",
+        "rejected_by_reason",
+        "llm_model_kind",
+        "llm_model_id",
+        "prompt_template_version",
+        "llm_calls",
+        "llm_retries",
+        "prompt_tokens",
+        "completion_tokens",
+        "replayed",
+        "warnings",
+    },
+    IndependentReport: {"claims", "rejected", "trace"},
 }
 
 
@@ -320,6 +363,13 @@ def test_contract_enums_match_the_specification():
         "RULE",
         "RULE_WITH_LLM_TRIAGE",
         "LLM_INDEPENDENT",
+    }
+    assert {item.value for item in ClaimKind} == {
+        "MISSING_INPUT_VALIDATION",
+        "UNSAFE_SINK",
+        "SWALLOWED_ERROR",
+        "RESOURCE_LIFECYCLE",
+        "INCONSISTENT_STATE",
     }
     assert {item.value for item in ModelKind} == {"fake", "real"}
     assert {item.value for item in EnforcementMode} == {

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from audit.models import RetractReason
+
 from .models import (
     EvidenceKind,
     EvidenceLine,
@@ -44,6 +46,13 @@ class DeterministicReviewer:
         registered = self._verdicts.get(request.finding_id)
         if registered is not None:
             return registered.model_copy(deep=True)
+
+        if request.rule_id is None:
+            # Semantic claims require an explicit verdict; never auto-pass.
+            return ReviewerVerdict(
+                verdict=ReviewVerdict.UNVERIFIABLE,
+                retract_reason=RetractReason.UNVERIFIABLE_CLAIM,
+            )
 
         support = EvidenceLine(
             file=request.file,
