@@ -30,7 +30,12 @@ from pipeline.models import (
     KeptTest,
     TestReport as PipelineReport,
 )
-from review.models import CrossCheckResult, EvidenceLine
+from review.models import (
+    CrossCheckResult,
+    CrossCheckTrace,
+    EvidenceLine,
+    ReviewRejectReason,
+)
 from sandbox.container import ContainerRuntime, SandboxBackend
 from sandbox.runner import (
     EnforcementMode,
@@ -223,6 +228,18 @@ CONTRACTS = {
         "reviewer_id",
         "source_context_hash",
         "elapsed_ms",
+        "rejection_reason",
+    },
+    CrossCheckTrace: {
+        "started_at",
+        "elapsed_ms",
+        "subjects_considered",
+        "verdict_counts",
+        "rule_checks",
+        "model_reviews",
+        "reviewer_ids",
+        "review_rejections",
+        "warnings",
     },
     EvidenceLine: {
         "file",
@@ -370,6 +387,19 @@ def test_contract_enums_match_the_specification():
         "SWALLOWED_ERROR",
         "RESOURCE_LIFECYCLE",
         "INCONSISTENT_STATE",
+    }
+    assert {item.value for item in ReviewRejectReason} == {
+        "empty_response",
+        "invalid_json",
+        "invalid_shape",
+        "unknown_verdict",
+        "unknown_role",
+        "unknown_kind",
+        "empty_explanation",
+        "empty_quote",
+        "quote_too_long",
+        "unlocatable_quote",
+        "ambiguous_quote",
     }
     assert {item.value for item in ModelKind} == {"fake", "real"}
     assert {item.value for item in EnforcementMode} == {

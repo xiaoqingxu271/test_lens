@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- LLM claim reviewer for semantic audit claims: `testlens audit PROJECT
+  --independent --reviewer llm` (deterministic reviewer remains the default).
+- `review/llm_reviewer.py` builds one `claim_review` request per semantic
+  subject (`review-v1`) and anchors model-proposed evidence deterministically:
+  the model supplies only quote/kind/role/explanation, and the stage computes
+  file, span, and snippet hash.
+- `ReviewRejectReason` with enumerated rejections for empty/malformed
+  responses, unknown verdict/role/kind, empty explanations or quotes,
+  overlong quotes, and unlocatable or ambiguous quotes.
+- Additive `ReviewerVerdict.rejection_reason`,
+  `CrossCheckResult.rejection_reason`, and
+  `CrossCheckTrace.review_rejections`.
+- Rule-backed claims never reach the LLM reviewer; independent findings still
+  cap at `STATIC_CONFIRMED` and are never folded as `SUSPICIOUS`.
+- Default fake returns `unverifiable` for claim reviews; `--proposals` seeds
+  verdicts and record/replay covers `claim_review` transcripts offline.
+- `docs/v2-spec-2d.md` accepted 2D specification.
+
 ## 2.1.0 — 2026-11-17
 
 ### Added

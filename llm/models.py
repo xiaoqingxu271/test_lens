@@ -21,6 +21,7 @@ class LLMPurpose(str, Enum):
     TEST_GENERATION = "test_generation"
     RULE_TRIAGE = "rule_triage"
     LLM_INDEPENDENT = "llm_independent"
+    CLAIM_REVIEW = "claim_review"
 
 
 class ModelKind(str, Enum):

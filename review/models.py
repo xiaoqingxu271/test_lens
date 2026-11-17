@@ -30,6 +30,20 @@ class EvidenceRole(str, Enum):
     REFUTES = "refutes"
 
 
+class ReviewRejectReason(str, Enum):
+    EMPTY_RESPONSE = "empty_response"
+    INVALID_JSON = "invalid_json"
+    INVALID_SHAPE = "invalid_shape"
+    UNKNOWN_VERDICT = "unknown_verdict"
+    UNKNOWN_ROLE = "unknown_role"
+    UNKNOWN_KIND = "unknown_kind"
+    EMPTY_EXPLANATION = "empty_explanation"
+    EMPTY_QUOTE = "empty_quote"
+    QUOTE_TOO_LONG = "quote_too_long"
+    UNLOCATABLE_QUOTE = "unlocatable_quote"
+    AMBIGUOUS_QUOTE = "ambiguous_quote"
+
+
 class ReviewerKind(str, Enum):
     RULE = "rule"
     MODEL = "model"
@@ -122,6 +136,7 @@ class ReviewerVerdict(BaseModel):
     evidence_lines: list[EvidenceLine] = Field(default_factory=list)
     retract_reason: RetractReason | None = None
     checked_rule_ids: list[str] = Field(default_factory=list)
+    rejection_reason: ReviewRejectReason | None = None
 
 
 class CrossCheckResult(BaseModel):
@@ -135,6 +150,7 @@ class CrossCheckResult(BaseModel):
     reviewer_id: str
     source_context_hash: str
     elapsed_ms: int
+    rejection_reason: ReviewRejectReason | None = None
 
 
 class CrossCheckTrace(BaseModel):
@@ -145,6 +161,7 @@ class CrossCheckTrace(BaseModel):
     rule_checks: int = 0
     model_reviews: int = 0
     reviewer_ids: list[str] = Field(default_factory=list)
+    review_rejections: dict[ReviewRejectReason, int] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
 
 

@@ -3,8 +3,10 @@ from .cross_check import (
     cross_check,
     subjects_from_candidates,
     subjects_from_drafts,
+    subjects_from_independent_claims,
 )
 from .fake import REVIEWER_ID, DeterministicReviewer
+from .llm_reviewer import LLMReviewer
 from .models import (
     CallerRef,
     CrossCheckReport,
@@ -20,6 +22,7 @@ from .models import (
     RetractReason,
     ReviewerKind,
     ReviewerVerdict,
+    ReviewRejectReason,
     ReviewVerdict,
     ReviewContext,
     ReviewRequest,
@@ -39,10 +42,12 @@ __all__ = [
     "EvidenceLine",
     "EvidenceRole",
     "GuardRef",
+    "LLMReviewer",
     "OtherRuleHit",
     "REVIEWER_ID",
     "RetractReason",
     "ReviewContext",
+    "ReviewRejectReason",
     "ReviewRequest",
     "ReviewVerdict",
     "ReviewerKind",
@@ -51,4 +56,5 @@ __all__ = [
     "cross_check",
     "subjects_from_candidates",
     "subjects_from_drafts",
+    "subjects_from_independent_claims",
 ]

@@ -155,6 +155,12 @@ def default_responder(request: LLMRequest) -> str:
         # The default fake proposes no semantic claims: independent findings
         # must be explicitly seeded so they cannot inflate precision.
         return json.dumps({"claims": []}, sort_keys=True)
+    if request.purpose is LLMPurpose.CLAIM_REVIEW:
+        # The default fake never confirms a semantic claim; verdicts must be
+        # explicitly seeded or recorded.
+        return json.dumps(
+            {"verdict": "unverifiable", "evidence": []}, sort_keys=True
+        )
     return ""
 
 

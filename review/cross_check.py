@@ -36,6 +36,7 @@ from .models import (
     RetractReason,
     ReviewerKind,
     ReviewerVerdict,
+    ReviewRejectReason,
     ReviewVerdict,
 )
 from .rules import RuleReviewer
@@ -204,6 +205,7 @@ def cross_check(
 
     results: list[CrossCheckResult] = []
     verdict_counts: Counter[ReviewVerdict] = Counter()
+    rejection_counts: Counter[ReviewRejectReason] = Counter()
     warnings: set[str] = set()
     rule_checks = 0
     model_reviews = 0
@@ -251,6 +253,8 @@ def cross_check(
 
         verdict = _validated_verdict(verdict, source_for)
         verdict_counts[verdict.verdict] += 1
+        if verdict.rejection_reason is not None:
+            rejection_counts[verdict.rejection_reason] += 1
 
         results.append(
             CrossCheckResult(
@@ -264,11 +268,14 @@ def cross_check(
                 reviewer_id=reviewer_id,
                 source_context_hash=context.source_context_hash,
                 elapsed_ms=int((time.perf_counter() - subject_started) * 1000),
+                rejection_reason=verdict.rejection_reason,
             )
         )
 
     if not subjects:
         warnings.add("no cross-check subjects")
+    for warning in getattr(reviewer, "warnings", []):
+        warnings.add(warning)
 
     results.sort(key=lambda result: result.finding_id)
 
@@ -282,6 +289,11 @@ def cross_check(
         rule_checks=rule_checks,
         model_reviews=model_reviews,
         reviewer_ids=sorted({result.reviewer_id for result in results}),
+        review_rejections=dict(
+            sorted(
+                rejection_counts.items(), key=lambda item: item[0].value
+            )
+        ),
         warnings=sorted(warnings),
     )
     return CrossCheckReport(results=results, trace=trace)

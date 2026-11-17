@@ -38,6 +38,7 @@ from review.cross_check import (
     subjects_from_independent_claims,
 )
 from review.fake import DeterministicReviewer
+from review.llm_reviewer import LLMReviewer
 from sandbox import runner
 from sandbox.container import (
     ContainerConfig,
@@ -98,6 +99,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--proposals",
         default=None,
         help="JSON file mapping deterministic request ids to fake responses",
+    )
+    audit.add_argument(
+        "--reviewer",
+        choices=["deterministic", "llm"],
+        default="deterministic",
+        help="reviewer for semantic claims (llm requires --independent)",
     )
     _add_sandbox_args(audit)
     add_llm_arguments(audit)
@@ -251,6 +258,8 @@ def _tests(args) -> int:
 def _audit(args) -> int:
     root = _project(args.project)
     profile = _profile(root)
+    if args.reviewer == "llm" and not args.independent:
+        raise ValueError("--reviewer llm requires --independent")
     options = options_from_args(args)
     responses = (
         load_proposals_file(Path(args.proposals).expanduser().resolve())
@@ -266,12 +275,12 @@ def _audit(args) -> int:
     subjects = subjects_from_candidates(scan, triage)
     if independent is not None:
         subjects = subjects + subjects_from_independent_claims(independent)
-    review = cross_check(
-        profile,
-        scan,
-        subjects,
-        DeterministicReviewer(),
+    reviewer = (
+        LLMReviewer(profile, llm)
+        if args.reviewer == "llm"
+        else DeterministicReviewer()
     )
+    review = cross_check(profile, scan, subjects, reviewer)
     config = runner.resolve_config(_sandbox_config(args))
     with tempfile.TemporaryDirectory(prefix="testlens_cli_repro_") as temporary:
         repro = run_repro(

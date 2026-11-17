@@ -167,6 +167,19 @@ must quote the source verbatim; the stage resolves the quote to exactly one
 span inside the requested function. Zero matches, multiple matches, an unknown
 kind, or an overlong quote is rejected with an enumerated reason.
 
+Semantic claims are reviewed by the deterministic reviewer by default. Add
+`--reviewer llm` to use `LLMReviewer`; it asks the model for a verdict and
+evidence quotes, then anchors every quote inside the subject file and computes
+the span and snippet hash itself. A verdict that cannot be anchored is
+retracted as unverifiable, with an enumerated rejection reason in the
+cross-check trace. Rule-backed claims never reach this reviewer.
+
+```bash
+testlens audit path/to/project \
+  --independent --reviewer llm \
+  --llm replay --transcript artifacts/review_transcript.json
+```
+
 A claim whose span overlaps a deterministic rule candidate is rejected as
 `DUPLICATE_OF_RULE`; duplicate anchors are rejected as `DUPLICATE_CLAIM`.
 Independent findings (`source=LLM_INDEPENDENT`, `rule_id=None`) still need
@@ -287,6 +300,9 @@ state `best-effort`.
   scanning covers module-level functions only.
 - Independent claim anchoring requires a verbatim quote that occurs exactly
   once in the function; paraphrased or ambiguous quotes are rejected.
+- `--reviewer llm` evidence must be in the subject file; cross-file evidence is
+  not supported in 2D. The default fake never confirms a semantic claim, so
+  offline use requires registered proposals or a recorded transcript.
 - The mutation operator set has 14 fixed operators; equivalent mutants are not
   detected, so observed kill rates are a lower bound.
 - R005 has explicit v1 gaps: no `pathlib.Path.open`/`requests` detection, no

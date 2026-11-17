@@ -112,6 +112,21 @@ def test_independent_purpose_defaults_to_no_claims():
     assert response.finish_reason == FinishReason.STOP
 
 
+def test_claim_review_purpose_defaults_to_unverifiable():
+    response = DeterministicFakeLLM().complete(
+        _request(
+            purpose=LLMPurpose.CLAIM_REVIEW,
+            request_id="cross_check::indep::test",
+        )
+    )
+
+    assert json.loads(response.text) == {
+        "verdict": "unverifiable",
+        "evidence": [],
+    }
+    assert response.finish_reason == FinishReason.STOP
+
+
 def test_unsupported_purpose_returns_empty_completion():
     response = DeterministicFakeLLM().complete(
         _request(purpose=LLMPurpose.RULE_TRIAGE)

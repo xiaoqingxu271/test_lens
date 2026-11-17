@@ -10,6 +10,7 @@ from evaluation.models import (
     EvaluationTrace,
 )
 from helpers import sandbox_health
+from review.fake import DeterministicReviewer
 from sandbox.runner import EnforcementMode
 from storage.db import open_database
 
@@ -201,6 +202,50 @@ def test_audit_cli_runs_independent_claims_and_reports_retractions(
     assert retracted["finding"]["claim_kind"] == "MISSING_INPUT_VALIDATION"
     assert payload["trace"]["independent_candidates_considered"] == 1
     assert payload["trace"]["independent_retracted"] == 1
+
+
+def test_audit_cli_llm_reviewer_requires_independent(tmp_path, capsys):
+    project = _independent_project(tmp_path)
+
+    exit_code = cli.main(
+        ["audit", str(project), "--reviewer", "llm", "--json"]
+    )
+
+    assert exit_code == 2
+    assert "--reviewer llm requires --independent" in capsys.readouterr().err
+
+
+def test_audit_cli_wires_the_llm_reviewer(tmp_path, capsys, monkeypatch):
+    project = _independent_project(tmp_path)
+    proposals = _independent_proposals(tmp_path)
+    seen: dict[str, str] = {}
+
+    class SpyReviewer(DeterministicReviewer):
+        def __init__(self, profile, llm):
+            super().__init__()
+            seen["model_id"] = llm.model_id
+
+    monkeypatch.setattr(cli, "LLMReviewer", SpyReviewer)
+
+    exit_code = cli.main(
+        [
+            "audit",
+            str(project),
+            "--independent",
+            "--reviewer",
+            "llm",
+            "--proposals",
+            str(proposals),
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["findings"] == []
+    assert payload["retracted"][0]["reason"] == "UNVERIFIABLE_CLAIM"
+    assert payload["retracted"][0]["finding"]["source"] == "LLM_INDEPENDENT"
+    assert seen["model_id"] == "fake:deterministic-v1"
 
 
 def test_audit_cli_skips_independent_claims_without_the_flag(tmp_path, capsys):
