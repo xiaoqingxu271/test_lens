@@ -6,6 +6,10 @@ from pathlib import Path
 import pytest
 from helpers import make_root_profile, sandbox_health
 
+from audit.independent import (
+    INDEPENDENT_TEMPLATE_VERSION,
+    scan_independent,
+)
 from audit.rule_scan import scan_rules
 from audit.triage import llm_triage
 from generation.generate import generate_tests
@@ -430,6 +434,60 @@ def test_vendored_transcript_replays_triage_end_to_end():
     assert report.trace.replayed is True
     assert report.trace.llm_calls == 7
     assert report.trace.llm_model_kind is ModelKind.REAL
+
+
+def test_independent_scan_records_and_replays_offline(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.py").write_text(
+        """\
+def handler(value):
+    if value > 0:
+        return 1
+    return 0
+""",
+        encoding="utf-8",
+    )
+    transcript_path = tmp_path / "transcript.json"
+    claim = json.dumps(
+        {
+            "claims": [
+                {
+                    "claim_kind": "MISSING_INPUT_VALIDATION",
+                    "quote": "if value > 0:",
+                    "claim": "value is compared without validation",
+                    "trigger_path": ["handler parameter"],
+                }
+            ]
+        },
+        sort_keys=True,
+    )
+    profile = make_root_profile(project)
+    scan = scan_rules(profile)
+
+    recorded = scan_independent(
+        profile, scan, RecordingLLM(_RealInner([claim]), transcript_path)
+    )
+    replayed = scan_independent(profile, scan, ReplayLLM(transcript_path))
+
+    assert len(recorded.claims) == 1
+    assert len(replayed.claims) == 1
+    assert replayed.claims[0].finding_id == recorded.claims[0].finding_id
+    assert replayed.claims[0].model_kind is ModelKind.REAL
+    assert replayed.trace.replayed is True
+    assert replayed.trace.llm_calls == 1
+    assert replayed.trace.llm_model_id == MODEL_ID
+
+    missing = LLMRequest(
+        request_id="llm_independent::app.py::unrecorded",
+        purpose=LLMPurpose.LLM_INDEPENDENT,
+        prompt_template_version=INDEPENDENT_TEMPLATE_VERSION,
+        system="system",
+        prompt="prompt",
+    )
+    with pytest.raises(ReplayError) as excinfo:
+        ReplayLLM(transcript_path).complete(missing)
+    assert excinfo.value.replay_reason is ReplayErrorReason.MISSING_RESPONSE
 
 
 def test_replay_fixture_does_not_cover_other_projects():

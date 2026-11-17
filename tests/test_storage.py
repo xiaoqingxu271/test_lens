@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 
 from audit.models import (
     AuditReport,
+    ClaimKind,
     EvidenceLevel,
     Finding,
     FindingSource,
@@ -142,7 +144,7 @@ def test_database_initialization_is_idempotent(tmp_path):
         version = conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'"
         ).fetchone()[0]
-        assert version == "1"
+        assert version == "2"
 
     with open_database(database) as conn:
         rows = conn.execute("SELECT value FROM schema_meta").fetchall()
@@ -205,6 +207,112 @@ def test_test_and_audit_reports_are_projected_into_queryable_rows(tmp_path):
             "SELECT * FROM retracted WHERE run_id = ?", (audit_run,)
         ).fetchall()
         assert retracted[0]["reason"] == "REFUTED_BY_CONTEXT"
+
+
+def _independent_finding(finding_id: str, line: int) -> Finding:
+    return Finding(
+        finding_id=finding_id,
+        file="app.py",
+        line_start=line,
+        line_end=line,
+        rule_id=None,
+        llm_finding_id=None,
+        source=FindingSource.LLM_INDEPENDENT,
+        title="MISSING_INPUT_VALIDATION: classify",
+        evidence_level=EvidenceLevel.SUSPICIOUS,
+        claim="unvalidated input",
+        claim_kind=ClaimKind.MISSING_INPUT_VALIDATION,
+    )
+
+
+def test_independent_findings_project_their_claim_kind(tmp_path):
+    database = tmp_path / "metadata.sqlite"
+    report = AuditReport(
+        findings=[
+            _independent_finding("i1", 5).model_copy(
+                update={"evidence_level": EvidenceLevel.STATIC_CONFIRMED}
+            )
+        ],
+        retracted=[
+            Retracted(
+                finding=_independent_finding("i2", 6),
+                reason=RetractReason.UNVERIFIABLE_CLAIM,
+            )
+        ],
+        trace=GradingTrace(
+            started_at=TIMESTAMP,
+            elapsed_ms=0,
+            findings_emitted=1,
+            retracted=1,
+            independent_candidates_considered=2,
+            independent_findings_emitted=1,
+            independent_retracted=1,
+        ),
+    )
+
+    with open_database(database) as conn:
+        run_id = save_audit_report(conn, "project", report)
+        finding = conn.execute(
+            "SELECT * FROM findings WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        assert finding["claim_kind"] == "MISSING_INPUT_VALIDATION"
+        assert finding["rule_id"] is None
+        assert finding["source"] == "LLM_INDEPENDENT"
+
+        retracted = conn.execute(
+            "SELECT * FROM retracted WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        assert retracted["claim_kind"] == "MISSING_INPUT_VALIDATION"
+        assert retracted["reason"] == "UNVERIFIABLE_CLAIM"
+
+
+def test_version_1_databases_gain_the_claim_kind_columns(tmp_path):
+    database = tmp_path / "old.sqlite"
+    conn = sqlite3.connect(database)
+    conn.executescript(
+        """
+        CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        INSERT INTO schema_meta(key, value) VALUES ('version', '1');
+        CREATE TABLE findings (
+            run_id TEXT NOT NULL,
+            finding_id TEXT NOT NULL,
+            file TEXT NOT NULL,
+            line_start INTEGER NOT NULL,
+            line_end INTEGER NOT NULL,
+            rule_id TEXT,
+            llm_finding_id TEXT,
+            source TEXT NOT NULL,
+            title TEXT NOT NULL,
+            evidence_level TEXT NOT NULL,
+            PRIMARY KEY (run_id, finding_id)
+        );
+        CREATE TABLE retracted (
+            run_id TEXT NOT NULL,
+            finding_id TEXT NOT NULL,
+            rule_id TEXT,
+            file TEXT NOT NULL,
+            line_start INTEGER NOT NULL,
+            line_end INTEGER NOT NULL,
+            evidence_level TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            PRIMARY KEY (run_id, finding_id)
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    with open_database(database) as conn:
+        for table in ("findings", "retracted"):
+            columns = {
+                row[1]
+                for row in conn.execute(f"PRAGMA table_info({table})")
+            }
+            assert "claim_kind" in columns
+        version = conn.execute(
+            "SELECT value FROM schema_meta WHERE key = 'version'"
+        ).fetchone()[0]
+        assert version == "2"
 
 
 def test_evaluation_report_is_projected_with_fixture_metrics(tmp_path):

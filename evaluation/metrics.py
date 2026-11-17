@@ -106,7 +106,10 @@ def summarize_test_side(
 
 
 def summarize_audit_side(
-    report: AuditReport, labels: EvaluationLabels
+    report: AuditReport,
+    labels: EvaluationLabels,
+    *,
+    independent: bool = False,
 ) -> AuditSideEvaluation:
     findings = report.findings
     rule_findings = [item for item in findings if not _is_independent(item)]
@@ -114,9 +117,18 @@ def summarize_audit_side(
     rule_defects = [
         label for label in labels.defects if label.source == "rule"
     ]
-    independent_defects = [
-        label for label in labels.defects if label.source == "llm_independent"
-    ]
+    independent_defects = (
+        [
+            label
+            for label in labels.defects
+            if label.source == "llm_independent"
+        ]
+        if independent
+        else []
+    )
+    # Rule-only runs must not be scored against labels for a stage that did
+    # not run, so the baseline stays comparable.
+    applicable_defects = [*rule_defects, *independent_defects]
 
     true_positives = sum(
         1
@@ -146,14 +158,24 @@ def summarize_audit_side(
         if any(_finding_matches(item, label) for item in independent_findings)
     )
     defects_found = rule_defects_found + independent_defects_found
+    applicable_false_positives = [
+        label
+        for label in labels.false_positives
+        if label.source == "rule" or independent
+    ]
+    applicable_false_negatives = [
+        label
+        for label in labels.false_negatives
+        if label.source == "rule" or independent
+    ]
     false_positives_retracted = sum(
         1
-        for label in labels.false_positives
+        for label in applicable_false_positives
         if any(_retracted_matches(item, label) for item in report.retracted)
     )
     false_negatives_observed = sum(
         1
-        for label in labels.false_negatives
+        for label in applicable_false_negatives
         if any(_finding_matches(item, label) for item in findings)
     )
 
@@ -226,10 +248,12 @@ def summarize_audit_side(
     return AuditSideEvaluation(
         candidates=report.trace.candidates_considered,
         findings_emitted=len(findings),
-        defects_labeled=len(labels.defects),
+        defects_labeled=len(applicable_defects),
         defects_found=defects_found,
         recall=(
-            defects_found / len(labels.defects) if labels.defects else None
+            defects_found / len(applicable_defects)
+            if applicable_defects
+            else None
         ),
         true_positives=true_positives,
         false_positives=false_positives,
@@ -252,9 +276,9 @@ def summarize_audit_side(
             else None
         ),
         independent_retracted=report.trace.independent_retracted,
-        false_positive_labels=len(labels.false_positives),
+        false_positive_labels=len(applicable_false_positives),
         false_positives_retracted=false_positives_retracted,
-        false_negative_labels=len(labels.false_negatives),
+        false_negative_labels=len(applicable_false_negatives),
         false_negatives_observed=false_negatives_observed,
         evidence_level_counts={
             level.value: count

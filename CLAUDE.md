@@ -32,7 +32,7 @@ Goal: for small Python web projects (FastAPI/Flask style with clear routes and f
 - `pipeline/` — test-side closure: isolated materialization, per-candidate double-run execution, target-local mutation scoring, enumerated discard attribution, and `TestReport`; never writes the target project.
 - `evaluation/` — evaluation harness and metrics over the vendored fixtures; `evaluation/fixtures/` holds the self-contained FastAPI/Flask projects, labels, and fixed fake proposals as package data; `eval/reports/` under the current working directory is generated output (gitignored).
 - `cli/` — `testlens` entry point: `tests`, `audit`, and `eval` subcommands; it selects the model source through `llm/options.py` and never implements a provider.
-- `storage/` — SQLite projection of test, audit, and evaluation reports with normalized tables plus the full JSON payload.
+- `storage/` — SQLite projection of test, audit, and evaluation reports with normalized tables plus the full JSON payload; schema version 2 adds nullable `claim_kind` to `findings`/`retracted` and migrates version-1 databases in place.
 
 ## Build order (non-negotiable)
 
@@ -184,6 +184,7 @@ Rule IDs are used in reports and evaluation grouping. Adding a rule requires upd
 - Two vendored minimal fixture projects (one FastAPI, one Flask), shipped as `evaluation` package data with pinned dependencies (`eval/requirements.txt`), offline execution, known defects, and known false positives. Decorators use local stubs so no framework install or network is needed. Real OSS projects are optional, pinned by commit, and are not the deterministic baseline.
 - Labels are marker-based (`labels.json`): each expected defect, false positive, and false negative names an exact source marker, resolved to a line at evaluation time.
 - `proposals.json` supplies fixed deterministic-fake proposals per target; the fake is the default and model identity is recorded in the report.
+- Each packaged fixture also ships `independent_proposals.json` and one `llm_independent` defect label (claim kind `MISSING_INPUT_VALIDATION`). `python -m evaluation --independent` yields 6 findings per fixture (5 rule + 1 independent) at rule precision 1.0 and independent precision/recall 1.0. Rule-only runs ignore `llm_independent` labels, so the default 5-finding baseline is unchanged.
 - One command: `python -m evaluation` writes timestamped `report.json`, `calibration.json`, and `summary.md` under `eval/reports/` relative to the current working directory, with fixed seeds, `double_run=true`, and the platform/enforcement mode.
 - Evaluation reports include kept count, `DiscardReason` distribution, mean kill rate with the assertion/exception/timeout breakdown, flaky rate, platform, enforcement mode, and the equivalent-mutant caveat; the audit side reports precision, per-rule hits/misses, evidence-level and retract-reason distributions.
 - Calibrated mutation-kill threshold: `0.5`. Calibration ran `0.2 / 0.5 / 0.8` over both fixtures. Strong proposals measured kill rate `1.0`; weak proposals `0.0`; partial proposals `0.25` (FastAPI) and `0.33` (Flask). At `0.2` the partial tests are kept; at `0.5` and `0.8` only the strong test survives, so `0.5` separates weak from strong with margin on both fixtures. The evidence is in `calibration.json` and `summary.md` of each run.
@@ -258,7 +259,8 @@ These decisions are normative for `LLM_INDEPENDENT`. `docs/v2-spec-2c.md` holds 
 - Independent grading: `refute`/`unverifiable` → retracted; `pass` with evidence → `STATIC_CONFIRMED`; no independent claim can be `REPRODUCED` or folded as `SUSPICIOUS`. `grade_and_emit` requires exactly one cross-check result per accepted claim.
 - `Finding.source=LLM_INDEPENDENT` implies `rule_id=None`, `llm_finding_id=None`, and a set `claim_kind`. `GradingTrace` counts independent candidates, emitted findings, and retractions separately.
 - The default fake returns `{"claims": []}` for `LLM_INDEPENDENT`; a fixture may seed `independent_proposals.json` for offline evaluation. Replay and budgets are the 2B mechanisms unchanged.
-- Evaluation keeps the rule-only baseline by default; `--independent` requires `llm_independent` fixture labels and reports rule and independent precision/recall separately. The calibrated threshold is unchanged until independent calibration evidence is accepted.
+- Evaluation keeps the rule-only baseline by default; `--independent` requires `llm_independent` fixture labels and reports rule and independent precision/recall separately. Rule-only metrics ignore `llm_independent` labels. The calibrated threshold is unchanged.
+- A recorded `llm_independent` transcript replays offline; a missing recording is `MISSING_RESPONSE` with no fallback. SQLite schema version 2 projects `claim_kind` on `findings` and `retracted`, with an in-place migration from version 1.
 
 ## Environment note
 

@@ -280,7 +280,11 @@ def _evaluate_fixture(
             test=summarize_test_side(
                 test_report, threshold=threshold, seed=seed
             ),
-            audit=summarize_audit_side(audit_report, labels),
+            audit=summarize_audit_side(
+                audit_report,
+                labels,
+                independent=independent_report is not None,
+            ),
         ),
         test_report,
         usage,

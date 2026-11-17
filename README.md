@@ -240,9 +240,9 @@ The vendored fixtures ship inside the `evaluation` package:
 Each is self-contained and offline; decorators use local stubs, so no framework
 installation or network access is needed. `labels.json` records expected
 defects, known false positives, and known false negatives by exact source
-marker. `proposals.json` supplies fixed fake proposals; a fixture with
-independent labels may also add `independent_proposals.json` for
-`llm_independent::<file>::<function>` requests.
+marker. `proposals.json` supplies fixed fake proposals; each packaged fixture
+also ships `independent_proposals.json` and one `llm_independent` defect label
+for `llm_independent::<file>::<function>` requests.
 
 `python -m evaluation` writes `report.json`, `calibration.json`, and
 `summary.md` under the timestamped directory `eval/reports/<timestamp>/`
@@ -250,7 +250,11 @@ relative to the current working directory.
 Reports include kept tests, discard-reason distribution, mean kill rate with
 the assertion/exception/timeout breakdown, flaky rate, platform, enforcement
 mode, audit precision, per-rule hits and false positives, evidence-level and
-retract-reason distributions, and the equivalent-mutant caveat.
+retract-reason distributions, and the equivalent-mutant caveat. The rule-only
+baseline reports 5 findings per fixture at precision 1.0;
+`python -m evaluation --independent` reports 6 (5 rule + 1 independent) and
+separate independent precision/recall. Rule-only metrics ignore
+`llm_independent` labels, so the default baseline stays comparable.
 
 The calibrated mutation-kill threshold is **0.5**. Calibration ran `0.2 / 0.5 /
 0.8` on both fixtures. Strong proposals measured `1.0`, weak proposals `0.0`,

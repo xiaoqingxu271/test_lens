@@ -25,6 +25,13 @@
       "file": "app.py",
       "rule_id": "R005-RESOURCE-NO-WITH",
       "marker": "config_handle = open("
+    },
+    {
+      "file": "app.py",
+      "source": "llm_independent",
+      "claim_kind": "MISSING_INPUT_VALIDATION",
+      "marker": "if value > 0:",
+      "case": "unvalidated_route_input"
     }
   ],
   "false_positives": [

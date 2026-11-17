@@ -23,7 +23,13 @@
   proposes no independent claims.
 - Evaluation reports rule and independent precision/recall separately;
   `independent_proposals.json` seeds fixed offline independent responses, and
-  `--independent` requires fixtures with `llm_independent` labels.
+  `--independent` requires fixtures with `llm_independent` labels. Rule-only
+  metrics ignore those labels, so the default 5-finding baseline is unchanged;
+  `--independent` reports 6 findings per packaged fixture.
+- SQLite schema version 2 adds nullable `claim_kind` to `findings` and
+  `retracted`, with an in-place migration from version 1.
+- Offline record/replay coverage for `llm_independent` requests, including
+  `MISSING_RESPONSE` when a recording is absent.
 - `docs/v2-spec-2c.md` accepted 2C specification.
 
 ## 2.0.0 — 2026-11-16

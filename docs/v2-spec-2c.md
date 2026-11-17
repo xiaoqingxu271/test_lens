@@ -285,10 +285,11 @@ grade_and_emit(
   enabled; independent results are never hidden inside a combined number.
 - `python -m evaluation` stays rule-only by default. `--independent` enables
   scanning and requires independent labels/proposals in the fixture; a fixture
-  without them is a `FixtureError`.
-- The deterministic baseline and calibrated threshold are unchanged until an
-  independent label set and calibration evidence are accepted and recorded in
-  `CLAUDE.md` and the README.
+  without them is a `FixtureError`. Both packaged fixtures ship one
+  `llm_independent` defect label and an `independent_proposals.json`.
+- Rule-only metrics ignore `llm_independent` labels, so the default baseline
+  and calibrated threshold are unchanged. `--independent` reports 6 findings
+  per packaged fixture (5 rule + 1 independent).
 - `summary.md` adds an independent section only when independent scanning ran.
 
 ## 11. CLI

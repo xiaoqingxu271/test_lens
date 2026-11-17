@@ -52,10 +52,24 @@ def test_fixture_contracts_cover_all_rules_and_targets():
 
     for root in roots:
         labels = load_labels(root)
-        assert {label.rule_id for label in labels.defects} == ALL_RULES
+        rule_defects = [
+            label for label in labels.defects if label.source == "rule"
+        ]
+        independent_defects = [
+            label
+            for label in labels.defects
+            if label.source == "llm_independent"
+        ]
+        assert {label.rule_id for label in rule_defects} == ALL_RULES
+        assert independent_defects
+        assert all(
+            label.claim_kind == ClaimKind.MISSING_INPUT_VALIDATION.value
+            for label in independent_defects
+        )
         assert len(labels.false_positives) == 2
         assert len(labels.false_negatives) == 1
         assert all(label.line > 0 for label in labels.defects)
+        assert (root / "independent_proposals.json").is_file()
 
         proposals = load_proposals(root)
         selection = select_targets(make_root_profile(root))
@@ -253,6 +267,40 @@ def test_evaluation_runs_both_fixtures():
         )
 
 
+def test_independent_evaluation_runs_on_both_packaged_fixtures():
+    report = run_evaluation(write=False, independent=True)
+
+    assert report.trace.independent is True
+    assert [fixture.project for fixture in report.fixtures] == [
+        "fastapi_project",
+        "flask_project",
+    ]
+    for fixture in report.fixtures:
+        audit = fixture.audit
+        assert audit.rule_findings_emitted == 5
+        assert audit.findings_emitted == 6
+        assert audit.defects_labeled == 6
+        assert audit.defects_found == 6
+        assert audit.recall == 1.0
+        assert audit.precision == 1.0
+        assert audit.independent_candidates == 1
+        assert audit.independent_findings == 1
+        assert audit.independent_true_positives == 1
+        assert audit.independent_false_positives == 0
+        assert audit.independent_precision == 1.0
+        assert audit.independent_recall == 1.0
+        independent = [
+            item
+            for item in audit.findings
+            if item.source == FindingSource.LLM_INDEPENDENT.value
+        ]
+        assert len(independent) == 1
+        assert (
+            independent[0].claim_kind
+            == ClaimKind.MISSING_INPUT_VALIDATION.value
+        )
+
+
 def _tiny_fixture(root: Path) -> Path:
     project = root / "tiny_project"
     project.mkdir(parents=True)
@@ -412,7 +460,7 @@ def test_audit_metrics_keep_rule_and_independent_precision_separate():
         ),
     )
 
-    summary = summarize_audit_side(report, labels)
+    summary = summarize_audit_side(report, labels, independent=True)
 
     assert summary.findings_emitted == 3
     assert summary.rule_findings_emitted == 1
@@ -430,6 +478,13 @@ def test_audit_metrics_keep_rule_and_independent_precision_separate():
         ClaimKind.MISSING_INPUT_VALIDATION.value,
         ClaimKind.MISSING_INPUT_VALIDATION.value,
     ]
+
+    rule_only = summarize_audit_side(report, labels)
+    assert rule_only.defects_labeled == 1
+    assert rule_only.defects_found == 1
+    assert rule_only.recall == 1.0
+    assert rule_only.precision == 1.0
+    assert rule_only.independent_recall is None
 
 
 def _independent_fixture(root: Path) -> Path:

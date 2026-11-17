@@ -19,7 +19,7 @@ from audit.models import AuditReport
 from evaluation.models import EvaluationReport
 from pipeline.models import TestReport
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS findings (
     rule_id TEXT,
     llm_finding_id TEXT,
     source TEXT NOT NULL,
+    claim_kind TEXT,
     title TEXT NOT NULL,
     evidence_level TEXT NOT NULL,
     PRIMARY KEY (run_id, finding_id),
@@ -100,6 +101,7 @@ CREATE TABLE IF NOT EXISTS retracted (
     line_start INTEGER NOT NULL,
     line_end INTEGER NOT NULL,
     evidence_level TEXT NOT NULL,
+    claim_kind TEXT,
     reason TEXT NOT NULL,
     PRIMARY KEY (run_id, finding_id),
     FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
@@ -136,6 +138,21 @@ CREATE INDEX IF NOT EXISTS idx_findings_rule ON findings(run_id, rule_id);
 """
 
 
+def _add_column_if_missing(
+    conn: sqlite3.Connection, table: str, column: str, ddl: str
+) -> None:
+    columns = {
+        row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+    if column not in columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+
+def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
+    _add_column_if_missing(conn, "findings", "claim_kind", "TEXT")
+    _add_column_if_missing(conn, "retracted", "claim_kind", "TEXT")
+
+
 def initialize(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
@@ -145,6 +162,12 @@ def initialize(conn: sqlite3.Connection) -> None:
     if row is None:
         conn.execute(
             "INSERT INTO schema_meta(key, value) VALUES ('version', ?)",
+            (SCHEMA_VERSION,),
+        )
+    elif row[0] == "1":
+        _migrate_v1_to_v2(conn)
+        conn.execute(
+            "UPDATE schema_meta SET value = ? WHERE key = 'version'",
             (SCHEMA_VERSION,),
         )
     elif row[0] != SCHEMA_VERSION:
@@ -340,8 +363,8 @@ def save_audit_report(
         """
         INSERT INTO findings(
             run_id, finding_id, file, line_start, line_end, rule_id,
-            llm_finding_id, source, title, evidence_level
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            llm_finding_id, source, claim_kind, title, evidence_level
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             (
@@ -353,6 +376,11 @@ def save_audit_report(
                 item.rule_id.value if item.rule_id is not None else None,
                 item.llm_finding_id,
                 item.source.value,
+                (
+                    item.claim_kind.value
+                    if item.claim_kind is not None
+                    else None
+                ),
                 item.title,
                 item.evidence_level.value,
             )
@@ -363,8 +391,8 @@ def save_audit_report(
         """
         INSERT INTO retracted(
             run_id, finding_id, rule_id, file, line_start, line_end,
-            evidence_level, reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            evidence_level, claim_kind, reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             (
@@ -379,6 +407,11 @@ def save_audit_report(
                 item.finding.line_start,
                 item.finding.line_end,
                 item.finding.evidence_level.value,
+                (
+                    item.finding.claim_kind.value
+                    if item.finding.claim_kind is not None
+                    else None
+                ),
                 item.reason.value,
             )
             for item in report.retracted

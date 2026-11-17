@@ -1,0 +1,12 @@
+{
+  "llm_independent::app.py::score": {
+    "claims": [
+      {
+        "claim_kind": "MISSING_INPUT_VALIDATION",
+        "quote": "if value >= 10 and value:",
+        "claim": "The route compares the raw request value without validating its type or range.",
+        "trigger_path": ["route parameter", "comparison"]
+      }
+    ]
+  }
+}
