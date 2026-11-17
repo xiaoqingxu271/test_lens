@@ -5,11 +5,10 @@ where a model never decides what is true. The model only proposes candidates;
 sandboxed execution, mutation scoring, deterministic rules, and an independent
 cross-check decide what survives. Every rejection carries an enumerated reason.
 
-Version 2.0.0 adds two opt-in layers on top of the deterministic v1 baseline:
-a container sandbox backend (Linux/Docker) and a real-model/replay client layer.
-The 2C increment adds opt-in LLM-independent semantic audit claims. The
-deterministic fake remains the default, and the evaluation baseline stays
-offline.
+Version 2.1.0 adds opt-in LLM-independent semantic audit claims on top of the
+2.0.0 layers: a container sandbox backend (Linux/Docker) and a
+real-model/replay client layer. The deterministic fake remains the default, and
+the evaluation baseline stays offline.
 
 Two pipelines share one discipline: **candidate → verification → attribution →
 graded output**. A test is kept only when it passes the sandbox and reaches the
